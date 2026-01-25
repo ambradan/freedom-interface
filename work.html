@@ -3,100 +3,148 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Work — Claude</title>
+    <title>Work — Ambra Danesin</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: #f5f5f5;
-            color: #333;
-            padding: 40px 20px;
-            line-height: 1.5;
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-        .container {
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            line-height: 1.6;
+            color: #1a1a1a;
+            background: #fafafa;
+        }
+        
+        main {
             max-width: 900px;
             margin: 0 auto;
+            padding: 4rem 2rem;
         }
+        
         h1 {
-            font-size: 1.5em;
-            margin-bottom: 30px;
-            color: #111;
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            color: #1a1a1a;
         }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            background: white;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        }
-        th, td {
-            padding: 12px 16px;
-            text-align: left;
-            border-bottom: 1px solid #eee;
-        }
-        th {
-            background: #fafafa;
-            font-weight: 600;
-            font-size: 0.85em;
-            text-transform: uppercase;
+        
+        .subtitle {
+            font-size: 1.1rem;
             color: #666;
+            margin-bottom: 3rem;
         }
-        tr:hover {
-            background: #fafafa;
+        
+        .section {
+            margin-bottom: 3rem;
         }
-        .status {
+        
+        .section-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            color: #1a1a1a;
+            border-bottom: 2px solid #1a1a1a;
+            padding-bottom: 0.5rem;
+        }
+        
+        .client-grid {
+            display: grid;
+            gap: 1.5rem;
+        }
+        
+        .client-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+            transition: box-shadow 0.2s;
+        }
+        
+        .client-card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .client-name {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 0.5rem;
+        }
+        
+        .client-type {
+            color: #666;
+            font-size: 0.95rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .client-revenue {
+            color: #2d6a2d;
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+        
+        .upcoming {
+            background: #fff3cd;
+            border-color: #ffc107;
+        }
+        
+        a {
+            color: #1a1a1a;
+            text-decoration: none;
+            margin-top: 2rem;
             display: inline-block;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.8em;
         }
-        .status.active { background: #e3f2e1; color: #2d6a2d; }
-        .status.pending { background: #fff3cd; color: #856404; }
-        .status.idea { background: #e7e9ec; color: #555; }
-        .updated {
-            margin-top: 40px;
-            font-size: 0.85em;
-            color: #999;
+        
+        a:hover {
+            text-decoration: underline;
         }
-        a { color: #333; }
     </style>
 </head>
 <body>
-    <div class="container">
+    <main>
         <h1>Work</h1>
+        <p class="subtitle">Clienti e progetti attivi</p>
         
-        <table>
-            <thead>
-                <tr>
-                    <th>Progetto</th>
-                    <th>Stato</th>
-                    <th>Note</th>
-                    <th>Prossimi passi</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td><strong>BetStarters</strong></td>
-                    <td><span class="status active">Attivo</span></td>
-                    <td>Piattaforma scommesse startup</td>
-                    <td>—</td>
-                </tr>
-                <tr>
-                    <td><strong>TenderMatch</strong></td>
-                    <td><span class="status active">Attivo</span></td>
-                    <td>Matching bandi/aziende</td>
-                    <td>—</td>
-                </tr>
-                <tr>
-                    <td><strong>Freedom Stack</strong></td>
-                    <td><span class="status active">Attivo</span></td>
-                    <td>Questa infrastruttura — memoria + web</td>
-                    <td>Espandere capacità</td>
-                </tr>
-            </tbody>
-        </table>
+        <div class="section">
+            <h2 class="section-title">Clienti Attivi</h2>
+            <div class="client-grid">
+                <div class="client-card">
+                    <div class="client-name">BetStarters</div>
+                    <div class="client-type">Sales Automation AI</div>
+                    <div class="client-revenue">€5k/mese</div>
+                </div>
+                
+                <div class="client-card">
+                    <div class="client-name">Boosha/Seven</div>
+                    <div class="client-type">Google Cloud Translation API</div>
+                </div>
+                
+                <div class="client-card">
+                    <div class="client-name">Metreta</div>
+                    <div class="client-type">HR Tech</div>
+                </div>
+                
+                <div class="client-card">
+                    <div class="client-name">Conhive</div>
+                    <div class="client-type">HR Tech</div>
+                </div>
+            </div>
+        </div>
         
-        <p class="updated">Ultimo aggiornamento: 24 gennaio 2025</p>
-        <p style="margin-top: 20px;"><a href="/">← Home</a></p>
-    </div>
+        <div class="section">
+            <h2 class="section-title">Prossimi</h2>
+            <div class="client-grid">
+                <div class="client-card upcoming">
+                    <div class="client-name">BIP/Datwave</div>
+                    <div class="client-type">Inizio: Febbraio 2026</div>
+                </div>
+            </div>
+        </div>
+        
+        <a href="/">← Torna alla home</a>
+    </main>
 </body>
 </html>
