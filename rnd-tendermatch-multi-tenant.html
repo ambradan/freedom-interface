@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: TenderMatch - multi-tenant</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+h3 { color: #0d0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; border-radius: 3px; }
+pre { background: #1a1a1a; padding: 15px; border-radius: 5px; overflow-x: auto; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #331; padding: 10px; border-left: 3px solid #ff0; margin: 15px 0; }
+.success { background: #131; padding: 10px; border-left: 3px solid #0f0; margin: 15px 0; }
+table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+th, td { border: 1px solid #333; padding: 10px; text-align: left; }
+th { background: #222; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #4 | 2026-01-25 15:50</p>
+<h1>TenderMatch: Multi-Tenant Architecture</h1>
+
+<h2>📋 Contesto dal Knowledge Base</h2>
+<p>TenderMatch è un compliance engine per gare pubbliche con:</p>
+<ul>
+<li><strong>Frontend:</strong> Lovable + Supabase Edge Functions</li>
+<li><strong>Backend:</strong> Express/Node.js su Railway</li>
+<li><strong>Database:</strong> Supabase PostgreSQL</li>
+<li><strong>AI:</strong> Anthropic Claude via <code>anthropicClient.ts</code></li>
+<li><strong>Payments:</strong> Stripe</li>
+</ul>
+
+<h2>🔴 Il Problema: Multi-Tenant</h2>
+<p>Multi-tenancy significa servire più organizzazioni (tenant) dalla stessa istanza applicativa, con:</p>
+<ul>
+<li><strong>Isolamento dati:</strong> Ogni tenant vede solo i propri dati</li>
+<li><strong>Isolamento risorse:</strong> Rate limiting, quote AI per tenant</li>
+<li><strong>Billing separato:</strong> Stripe subscription per organizzazione</li>
+<li><strong>Compliance:</strong> GDPR, audit trail per tenant</li>
+</ul>
+
+<h2>🏗️ Approcci Architetturali</h2>
+
+<table>
+<tr>
+<th>Approccio</th>
+<th>Pro</th>
+<th>Contro</th>
+<th>Fit TenderMatch</th>
+</tr>
+<tr>
+<td><strong>Database per tenant</strong></td>
+<td>Isolamento totale, compliance facile</td>
+<td>Costi alti, gestione complessa</td>
+<td>❌ Overkill</td>
+</tr>
+<tr>
+<td><strong>Schema per tenant</strong></td>
+<td>Buon isolamento, PostgreSQL native</td>
+<td>Migration complesse</td>
+<td>⚠️ Possibile</td>
+</tr>
+<tr>
+<td><strong>Row-Level Security (RLS)</strong></td>
+<td>Supabase native, costi bassi</td>
+<td>Richiede disciplina</td>
+<td>✅ Raccomandato</td>
+</tr>
+</table>
+
+<h2>✅ Soluzione Raccomandata: RLS + Tenant ID</h2>
+
+<h3>1. Schema Database</h3>
+<pre><code>-- Tabella organizzazioni
+CREATE TABLE organizations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  stripe_customer_id TEXT,
+  plan TEXT DEFAULT 'free',
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Tabella membership utenti
+CREATE TABLE organization_members (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID REFERENCES organizations(id),
+  user_id UUID REFERENCES auth.users(id),
+  role TEXT DEFAULT 'member', -- 'owner', 'admin', 'member'
+  UNIQUE(organization_id, user_id)
+);
+
+-- Aggiungere org_id a tabelle esistenti
+ALTER TABLE tenders ADD COLUMN org_id UUID REFERENCES organizations(id);
+ALTER TABLE compliance_reports ADD COLUMN org_id UUID REFERENCES organizations(id);
+</code></pre>
+
+<h3>2. Row-Level Security Policies</h3>
+<pre><code>-- Funzione helper per ottenere org_id dell'utente corrente
+CREATE OR REPLACE FUNCTION get_user_org_id()
+RETURNS UUID AS $$
+  SELECT organization_id 
+  FROM organization_members 
+  WHERE user_id = auth.uid()
+  LIMIT 1;
+$$ LANGUAGE sql SECURITY DEFINER;
+
+-- Policy su tenders
+ALTER TABLE tenders ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users see own org tenders"
+  ON tenders FOR SELECT
+  USING (org_id = get_user_org_id());
+
+CREATE POLICY "Users insert own org tenders"
+  ON tenders FOR INSERT
+  WITH CHECK (org_id = get_user_org_id());
+</code></pre>
+
+<h3>3. Backend: Middleware Tenant</h3>
+<pre><code>// middleware/tenant.ts
+import { Request, Response, NextFunction } from 'express';
+import { supabase } from '../lib/supabase';
+
+export async function tenantMiddleware(
+  req: Request, 
+  res: Response, 
+  next: NextFunction
+) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return res.status(401).json({ error: 'Unauthorized' });
+
+  const token = authHeader.replace('Bearer ', '');
+  
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  if (error || !user) return res.status(401).json({ error: 'Invalid token' });
+
+  // Get user's organization
+  const { data: membership } = await supabase
+    .from('organization_members')
+    .select('organization_id, role')
+    .eq('user_id', user.id)
+    .single();
+
+  if (!membership) {
+    return res.status(403).json({ error: 'No organization' });
+  }
+
+  req.tenant = {
+    userId: user.id,
+    orgId: membership.organization_id,
+    role: membership.role
+  };
+
+  next();
+}
+</code></pre>
+
+<h3>4. Rate Limiting per Tenant</h3>
+<div class="warning">
+<strong>⚠️ Critico:</strong> Il rate limiting attuale in <code>anthropicClient.ts</code> è globale (in-memory). Per multi-tenant serve rate limiting per org_id.
+</div>
+
+<pre><code>// In anthropicClient.ts - modificare
+const tenantHistory: Map&lt;string, RateRecord[]&gt; = new Map();
+
+async function waitForRateLimit(
+  orgId: string, 
+  estimatedTokens: number
+): Promise&lt;void&gt; {
+  const history = tenantHistory.get(orgId) || [];
+  // ... stessa logica ma per tenant
+  tenantHistory.set(orgId, history);
+}
+</code></pre>
+
+<h3>5. Stripe Multi-Tenant</h3>
+<pre><code>// Creare customer Stripe per organizzazione
+const customer = await stripe.customers.create({
+  email: orgAdminEmail,
+  metadata: {
+    org_id: organization.id,
+    org_name: organization.name
+  }
+});
+
+// Salvare stripe_customer_id
+await supabase
+  .from('organizations')
+  .update({ stripe_customer_id: customer.id })
+  .eq('id', organization.id);
+</code></pre>
+
+<h2>📊 Migration Path</h2>
+
+<table>
+<tr>
+<th>Step</th>
+<th>Descrizione</th>
+<th>Rischio</th>
+</tr>
+<tr>
+<td>1</td>
+<td>Creare tabelle <code>organizations</code> e <code>organization_members</code></td>
+<td>🟢 Basso</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Aggiungere <code>org_id</code> alle tabelle esistenti (nullable)</td>
+<td>🟢 Basso</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Migrare utenti esistenti a org default</td>
+<td>🟡 Medio</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Abilitare RLS policies</td>
+<td>🔴 Alto - testare prima!</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Modificare backend per tenant middleware</td>
+<td>🟡 Medio</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Rate limiting per tenant</td>
+<td>🟡 Medio</td>
+</tr>
+</table>
+
+<h2>🔗 Risorse Utili</h2>
+<ul>
+<li><a href="https://supabase.com/docs/guides/auth/row-level-security">Supabase RLS Guide</a></li>
+<li><a href="https://supabase.com/docs/guides/database/postgres/row-level-security">PostgreSQL RLS Deep Dive</a></li>
+<li><a href="https://stripe.com/docs/billing/subscriptions/multiparty">Stripe Multi-Party Subscriptions</a></li>
+<li><a href="https://www.postgresql.org/docs/current/ddl-rowsecurity.html">PostgreSQL Official RLS Docs</a></li>
+</ul>
+
+<h2>⚡ Next Steps per Ambra</h2>
+<div class="success">
+<strong>Priorità immediata:</strong>
+<ol>
+<li>Decidere se multi-tenant è necessario ORA o può aspettare</li>
+<li>Se sì: iniziare da Step 1-2 (schema changes, zero rischio)</li>
+<li>Testare RLS in ambiente staging prima di produzione</li>
+<li>Considerare: il rate limiting globale attuale potrebbe bastare per MVP?</li>
+</ol>
+</div>
+
+<h2>❓ Domande da Chiarire</h2>
+<ul>
+<li>Quanti tenant previsti nel primo anno?</li>
+<li>Serve isolamento billing immediato o può essere manuale?</li>
+<li>Gli utenti esistenti vanno migrati o si parte fresh?</li>
+<li>Serve audit trail separato per tenant (compliance)?</li>
+</ul>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>

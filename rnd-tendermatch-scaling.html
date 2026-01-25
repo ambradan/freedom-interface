@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: TenderMatch - scaling</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+h3 { color: #0d0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; border-radius: 3px; }
+pre { background: #1a1a1a; padding: 15px; overflow-x: auto; border-left: 3px solid #0f0; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #330; padding: 10px; border-left: 3px solid #f90; margin: 15px 0; }
+.success { background: #030; padding: 10px; border-left: 3px solid #0f0; margin: 15px 0; }
+table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+th, td { border: 1px solid #333; padding: 8px; text-align: left; }
+th { background: #222; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #4 | 2025-01-25 15:50</p>
+<h1>TenderMatch: Scaling Strategy</h1>
+
+<h2>Problema Identificato</h2>
+<p>TenderMatch ha un'architettura multi-componente che richiede scaling coordinato:</p>
+<ul>
+<li><strong>Frontend Lovable</strong> - già scalato automaticamente (CDN)</li>
+<li><strong>Backend Railway</strong> - single instance, bottleneck potenziale</li>
+<li><strong>Supabase PostgreSQL</strong> - connection limits</li>
+<li><strong>Anthropic API</strong> - rate limits 30k tokens/min (già affrontato)</li>
+</ul>
+
+<h2>Architettura Attuale</h2>
+<pre>
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Lovable   │────▶│   Railway   │────▶│  Supabase   │
+│  (Frontend) │     │  (Backend)  │     │ (PostgreSQL)│
+└─────────────┘     └──────┬──────┘     └─────────────┘
+                          │
+                          ▼
+                   ┌─────────────┐
+                   │  Anthropic  │
+                   │   Claude    │
+                   └─────────────┘
+</pre>
+
+<h2>Bottleneck Analysis</h2>
+<table>
+<tr><th>Componente</th><th>Limite</th><th>Rischio</th><th>Priorità</th></tr>
+<tr><td>Railway Backend</td><td>1 instance, ~512MB RAM</td><td>Alto sotto carico</td><td>🔴 P1</td></tr>
+<tr><td>Anthropic API</td><td>30k tokens/min</td><td>Già mitigato con queue</td><td>🟢 OK</td></tr>
+<tr><td>Supabase</td><td>~60 connections (free tier)</td><td>Medio</td><td>🟡 P2</td></tr>
+<tr><td>Lovable Frontend</td><td>CDN auto-scaled</td><td>Basso</td><td>🟢 OK</td></tr>
+</table>
+
+<h2>Soluzioni per Layer</h2>
+
+<h3>1. Railway Backend Scaling</h3>
+<div class="success">
+<strong>Opzione A: Vertical Scaling (Quick Win)</strong>
+<ul>
+<li>Upgrade a Pro plan Railway</li>
+<li>Aumenta RAM a 2GB+</li>
+<li>Costo: ~$20/mese</li>
+</ul>
+</div>
+
+<div class="warning">
+<strong>Opzione B: Horizontal Scaling (Richiede refactor)</strong>
+<ul>
+<li>Il rate limiting in-memory NON funziona con multiple instances</li>
+<li>Richiede Redis per stato condiviso</li>
+<li>Complessità: Alta</li>
+</ul>
+</div>
+
+<pre>
+# railway.toml per autoscaling
+[deploy]
+numReplicas = 2  # ⚠️ Richiede Redis per rate limiting!
+
+# Se vai multi-replica, aggiungi Redis:
+[services.redis]
+  image = "redis:alpine"
+</pre>
+
+<h3>2. Supabase Connection Pooling</h3>
+<pre>
+# Usa connection string con pooler (porta 6543, non 5432)
+DATABASE_URL=postgresql://user:pass@db.xxx.supabase.co:6543/postgres?pgbouncer=true
+</pre>
+<p>Questo aumenta le connessioni effettive da ~60 a ~200+</p>
+
+<h3>3. Queue-Based AI Processing</h3>
+<p>Già implementato con <code>anthropicQueue.ts</code>. Verificare che:</p>
+<ul>
+<li>Tutte le chiamate passino dalla queue</li>
+<li>Retry logic funzioni correttamente</li>
+<li>Token budget tracking sia accurato</li>
+</ul>
+
+<h3>4. Caching Layer (Futuro)</h3>
+<pre>
+// Pattern per caching analisi già fatte
+const cacheKey = hash(documentContent + analysisType);
+const cached = await redis.get(cacheKey);
+if (cached) return JSON.parse(cached);
+
+const result = await analyzeWithClaude(document);
+await redis.setex(cacheKey, 86400, JSON.stringify(result)); // 24h cache
+return result;
+</pre>
+
+<h2>Roadmap Scaling</h2>
+<table>
+<tr><th>Fase</th><th>Azione</th><th>Effort</th><th>Impatto</th></tr>
+<tr><td>Ora</td><td>Vertical scaling Railway (upgrade RAM)</td><td>5 min</td><td>2x capacity</td></tr>
+<tr><td>Settimana 1</td><td>Supabase pooler connection string</td><td>30 min</td><td>3x connections</td></tr>
+<tr><td>Settimana 2</td><td>Redis per rate limiting condiviso</td><td>4h</td><td>Horizontal ready</td></tr>
+<tr><td>Mese 1</td><td>Caching analisi ripetute</td><td>8h</td><td>50% cost reduction</td></tr>
+</table>
+
+<h2>Quick Wins Immediati</h2>
+<ol>
+<li><strong>Railway Dashboard</strong> → Settings → Upgrade instance size</li>
+<li><strong>Supabase Dashboard</strong> → Settings → Database → Connection pooling → Copy pooler URL</li>
+<li><strong>Monitoraggio</strong>: Aggiungi logging su tempo risposta e memoria usata</li>
+</ol>
+
+<h2>Metriche da Tracciare</h2>
+<pre>
+// Aggiungi in anthropicClient.ts
+console.log(JSON.stringify({
+  event: 'api_call',
+  duration_ms: Date.now() - startTime,
+  tokens_used: estimatedTokens,
+  queue_length: history.length,
+  memory_mb: process.memoryUsage().heapUsed / 1024 / 1024
+}));
+</pre>
+
+<h2>Next Steps per Ambra</h2>
+<ol>
+<li>✅ Verifica attuale utilizzo RAM su Railway dashboard</li>
+<li>✅ Se > 70%, upgrade immediato</li>
+<li>✅ Cambia connection string Supabase a pooler</li>
+<li>⏳ Valuta Redis se prevedi > 100 utenti concorrenti</li>
+</ol>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
