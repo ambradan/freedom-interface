@@ -1,6 +1,6 @@
 {
-  "iterations": 4,
-  "last_project": "TenderMatch",
+  "iterations": 5,
+  "last_project": "CDSS",
   "findings": [
     {
       "iteration": 4,
@@ -8,7 +8,14 @@
       "problem": "multi-tenant",
       "page": "rnd-tendermatch-multi-tenant.html",
       "ts": "2026-01-25T15:50:46.645078"
+    },
+    {
+      "iteration": 5,
+      "project": "CDSS",
+      "problem": "clinical validation",
+      "page": "rnd-20260126-0601-cdss-clinical-validation.html",
+      "ts": "2026-01-26T06:01:25.593603"
     }
   ],
-  "last_search": "multi-tenant solution implementation guide 2024 2025"
+  "last_search": "clinical validation solution implementation guide 2024 2025"
 }
