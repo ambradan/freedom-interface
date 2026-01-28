@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: BenchmarkPA - Data Sourcing Prezzi PA</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+h3 { color: #080; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; border-radius: 3px; }
+pre { background: #222; padding: 15px; overflow-x: auto; border-left: 3px solid #0f0; }
+.meta { color: #666; font-size: 0.9em; }
+.status { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 0.85em; }
+.status.critical { background: #f004; color: #f00; }
+.status.high { background: #fa04; color: #fa0; }
+.status.medium { background: #0a04; color: #0a0; }
+.section { margin: 30px 0; padding: 20px; background: #1a1a1a; border-radius: 8px; }
+ul { line-height: 1.8; }
+.warning { background: #440; padding: 10px; border-left: 3px solid #f80; margin: 15px 0; }
+table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+th, td { padding: 10px; text-align: left; border-bottom: 1px solid #333; }
+th { color: #0f0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #7 | Freedom Agent | 2026-01-28 06:00</p>
+
+<h1>🔍 BenchmarkPA: Data Sourcing Prezzi PA</h1>
+
+<div class="section">
+<h2>📋 Problema</h2>
+<p><strong>Progetto:</strong> BenchmarkPA - Pricing intelligence B2B2G per Pubblica Amministrazione</p>
+<p><strong>Challenge:</strong> Acquisire dati prezzi reali da contratti PA per analisi sottosoglia (&lt;40k€)</p>
+<p><strong>Stack:</strong> Supabase Edge Functions + PostgreSQL</p>
+<p><strong>Status attuale:</strong> <span class="status critical">500 record sample - dati mock</span></p>
+
+<div class="warning">
+⚠️ <strong>Criticità:</strong> Il MVP funziona ma con dati placeholder. Per validazione business serve data sourcing reale.
+</div>
+</div>
+
+<div class="section">
+<h2>🎯 Fonti Dati Disponibili</h2>
+
+<h3>1. ANAC (Autorità Nazionale Anticorruzione)</h3>
+<table>
+<tr>
+<th>Risorsa</th>
+<th>Copertura</th>
+<th>Formato</th>
+<th>Accessibilità</th>
+</tr>
+<tr>
+<td><strong>Banca Dati Nazionale Contratti Pubblici</strong></td>
+<td>Contratti &gt;40k€</td>
+<td>XML/CSV</td>
+<td><span class="status medium">Pubblica</span></td>
+</tr>
+<tr>
+<td><strong>Comunicazioni CIG</strong></td>
+<td>Tutti i CIG rilasciati</td>
+<td>XML</td>
+<td><span class="status medium">Pubblica</span></td>
+</tr>
+<tr>
+<td><strong>Open Data ANAC</strong></td>
+<td>Dataset aggregati</td>
+<td>CSV/JSON</td>
+<td><span class="status medium">API disponibile</span></td>
+</tr>
+</table>
+
+<p><strong>URL:</strong> <a href="https://dati.anticorruzione.it" target="_blank">https://dati.anticorruzione.it</a></p>
+<p><strong>API:</strong> <code>https://dati.anticorruzione.it/opendata</code></p>
+
+<h3>2. Portali Regionali/Comunali</h3>
+<ul>
+<li><strong>Regione Toscana:</strong> Open Data contratti (<a href="https://dati.toscana.it" target="_blank">dati.toscana.it</a>)</li>
+<li><strong>Comune di Milano:</strong> Albo Pretorio Online</li>
+<li><strong>Regione Lombardia:</strong> SINTEL (Sistema INTegrato ELettronico)</li>
+<li><strong>Consip:</strong> MePA - Mercato Elettronico PA</li>
+</ul>
+
+<h3>3. Fonti Indirette</h3>
+<ul>
+<li><strong>Albi Pretorio:</strong> Determinazioni di affidamento diretto</li>
+<li><strong>Amministrazione Trasparente:</strong> Sezione "Bandi di gara e contratti"</li>
+<li><strong>PagoPA:</strong> Fatturazione elettronica (accesso limitato)</li>
+</ul>
+</div>
+
+<div class="section">
+<h2>⚙️ Strategia di Implementazione</h2>
+
+<h3>Approccio 1: ANAC Open Data (raccomandato)</h3>
+<pre><code>// Supabase Edge Function
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+
+serve(async (req) => {
+  const anacUrl = "https://dati.anticorruzione.it/opendata/dataset/cig"
+  
+  const response = await fetch(anacUrl, {
+    headers: { 'Accept': 'application/json' }
+  })
+  
+  const data = await response.json()
+  
+  // Transform e insert in Supabase
+  const contracts = data.result.records.map(r => ({
+    cig: r.cig,
+    oggetto: r.oggetto,
+    importo: parseFloat(r.importo_aggiudicazione),
+    stazione_appaltante: r.cf_amministrazione_appaltante,
+    data: r.data_pubblicazione,
+    cpv: r.cpv
+  }))
+  
+  // Bulk insert
+  const { error } = await supabase
+    .from('price_points')
+    .upsert(contracts)
+    
+  return new Response(JSON.stringify({ imported: contracts.length }))
+})</code></pre>
+
+<p><strong>Pro:</strong> Dati ufficiali, aggiornati, copertura nazionale</p>
+<p><strong>Contro:</strong> Prevalentemente &gt;40k€, serve integrazione altre fonti per sottosoglia</p>
+
+<h3>Approccio 2: Web Scraping Albi Pretorio</h3>
+<pre><code>// Puppeteer/Playwright in Edge Function
+const scrapeDetermina = async (url) => {
+  const browser = await puppeteer.launch()
+  const page = await browser.newPage()
+  
+  await page.goto(url)
+  
+  const data = await page.evaluate(() => {
+    return {
+      oggetto: document.querySelector('.oggetto')?.textContent,
+      importo: document.querySelector('.importo')?.textContent,
+      fornitore: document.querySelector('.aggiudicatario')?.textContent
+    }
+  })
+  
+  await browser.close()
+  return data
+}</code></pre>
+
+<p><strong>Pro:</strong> Cattura sottosoglia, alta granularità</p>
+<p><strong>Contro:</strong> Fragile (layout diversi), rate limiting, legal grey area</p>
+
+<h3>Approccio 3: Partnership con Aggregatori</h3>
+<ul>
+<li><strong>TuttoGare:</strong> Aggregatore commerciale contratti PA</li>
+<li><strong>Appalti.info:</strong> Database contratti + alert</li>
+<li><strong>Acquisti in rete PA:</strong> Consip/Mepa data</li>
+</ul>
+
+<p><strong>Pro:</strong> Dati puliti, API strutturate, copertura completa</p>
+<p><strong>Contro:</strong> Costo licenza, vendor lock-in</p>
+</div>
+
+<div class="section">
+<h2>🚀 Piano di Azione Immediato</h2>
+
+<h3>Fase 1: MVP Data (2-4 ore)</h3>
+<ol>
+<li><strong>Implementa ANAC Open Data scraper</strong>
+   <ul>
+   <li>Edge Function scheduled (cron daily)</li>
+   <li>Import ultimi 30gg contratti</li>
+   <li>Focus CPV: forniture IT, servizi pulizia, manutenzione</li>
+   </ul>
+</li>
+<li><strong>Normalizza dati</strong>
+   <ul>
+   <li>Parsing importi (gestisci "€", ".", ",")</li>
+   <li>Mapping CPV → categorie BenchmarkPA</li>
+   <li>Dedup per CIG</li>
+   </ul>
+</li>
+<li><strong>Valida sample</strong>
+   <ul>
+   <li>Confronta 10 contratti random con fonti originali</li>
+   <li>Verifica coerenza importi/categorie</li>
+   </ul>
+</li>
+</ol>
+
+<h3>Fase 2: Enrichment (1-2 settimane)</h3>
+<ol>
+<li><strong>Scraping selettivo Albi Pretorio</strong>
+   <ul>
+   <li>Target: top 20 comuni italiani per popolazione</li>
+   <li>Focus: determinazioni affidamento diretto</li>
+   <li>Rate limit: max 1 req/5sec per sito</li>
+   </ul>
+</li>
+<li><strong>Integra MePA Consip</strong>
+   <ul>
+   <li>API pubblica catalogo</li>
+   <li>Prezzi listino vs prezzi aggiudicazione</li>
+   </ul>
+</li>
+</ol>
+
+<h3>Fase 3: Partnership (medio termine)</h3>
+<ul>
+<li>Contatta TuttoGare per trial API</li>
+<li>Esplora co-marketing con Consip</li>
+<li>Proponi integrazione a software gestionali PA (es. Aruba PA, TeamSystem)</li>
+</ul>
+</div>
+
+<div class="section">
+<h2>📊 Schema Database Ottimizzato</h2>
+
+<pre><code>-- Tabella principale price_points
+CREATE TABLE price_points (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  cig TEXT UNIQUE,
+  cup TEXT,
+  oggetto TEXT NOT NULL,
+  cpv TEXT[], -- array codici CPV
+  categoria TEXT, -- mapping interno
+  importo_base NUMERIC(12,2),
+  importo_aggiudicazione NUMERIC(12,2),
+  ribasso_percentuale NUMERIC(5,2),
+  stazione_appaltante TEXT,
+  cf_stazione TEXT,
+  regione TEXT,
+  provincia TEXT,
+  fornitore TEXT,
+  cf_fornitore TEXT,
+  data_pubblicazione DATE,
+  data_aggiudicazione DATE,
+  procedura TEXT, -- 'affidamento_diretto', 'procedura_negoziata', etc
+  fonte TEXT, -- 'anac', 'albo_pretorio', 'mepa'
+  fonte_url TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Indici per performance
+CREATE INDEX idx_price_categoria ON price_points(categoria);
+CREATE INDEX idx_price_importo ON price_points(importo_aggiudicazione);
+CREATE INDEX idx_price_data ON price_points(data_aggiudicazione DESC);
+CREATE INDEX idx_price_regione ON price_points(regione);
+CREATE INDEX idx_price_cpv ON price_points USING GIN(cpv);
+
+-- Tabella mapping CPV → categorie
+CREATE TABLE cpv_mapping (
+  cpv_code TEXT PRIMARY KEY,
+  categoria TEXT NOT NULL,
+  sottocategoria TEXT,
+  descrizione TEXT
+);
+
+-- Tabella log import
+CREATE TABLE import_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  fonte TEXT NOT NULL,
+  records_imported INT,
+  records_failed INT,
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  error_log JSONB
+);</code></pre>
+</div>
+
+<div class="section">
+<h2>⚠️ Considerazioni Legali/Etiche</h2>
+
+<div class="warning">
+<strong>GDPR:</strong> I dati PA sono pubblici ma contengono info su persone fisiche (RUP, fornitori individuali). Anonimizza dove possibile.
+</div>
+
+<ul>
+<li><strong>Robots.txt:</strong> Rispetta sempre, anche se tecnicamente aggirabile</li>
+<li><strong>Rate limiting:</strong> Max 1 req/sec per dominio, evita DDoS accidentali</li>
+<li><strong>Attribution:</strong> Cita sempre fonte dati (ANAC, Comune X, etc)</li>
+<li><strong>Uso commerciale:</strong> Verifica licenze Open Data (solitamente CC-BY 4.0)</li>
+</ul>
+</div>
+
+<div class="section">
+<h2>🎯 Metriche di Successo</h2>
+
+<table>
+<tr>
+<th>Metrica</th>
+<th>Target MVP</th>
+<th>Target Production</th>
+</tr>
+<tr>
+<td>Record totali</td>
+<td>10.000+</td>
+<td>500.000+</td>
+</tr>
+<tr>
+<td>Copertura sottosoglia</td>
+<td>30%</td>
+<td>70%</td>
+</tr>
+<tr>
+<td>Categorie coperte</td>
+<td>10</td>
+<td>50+</td>
+</tr>
+<tr>
+<td>Aggiornamento dati</td>
+<td>Settimanale</td>
+<td>Giornaliero</td>
+</tr>
+<tr>
+<td>Accuratezza importi</td>
+<td>95%</td>
+<td>99%</td>
+</tr>
+</table>
+</div>
+
+<div class="section">
+<h2>📚 Risorse Utili</h2>
+
+<h3>Documentazione Ufficiale</h3>
+<ul>
+<li><a href="https://dati.anticorruzione.it/superset/dashboard/appalti/" target="_blank">ANAC Open Data Dashboard</a></li>
+<li><a href="https://www.anticorruzione.it/-/banca-dati-nazionale-dei-contratti-pubblici" target="_blank">Guida BDNCP</a></li>
+<li><a href="https://www.acquistinretepa.it/opencms/opencms/" target="_blank">Consip - Acquisti in Rete</a></li>
+</ul>
+
+<h3>Tool & Library</h3>
+<ul>
+<li><strong>Puppeteer for Deno:</strong> <code>https://deno.land/x/puppeteer</code></li>
+<li><strong>CSV Parser:</strong> <code>https://deno.land/x/csv</code></li>
+<li><strong>XML Parser:</strong> <code>https://deno.land/x/xml</code></li>
+</ul>
+
+<h3>Competitor Analysis</h3>
+<ul>
+<li><strong>TuttoGare:</strong> Modello business, pricing</li>
+<li><strong>Tender.it:</strong> UX/UI analisi contratti</li>
+<li><strong>GarePA:</strong> Alert system</li>
+</ul>
+</div>
+
+<div class="section">
+<h2>✅ Next Steps per Ambra</h2>
+
+<h3>Immediate (oggi)</h3>
+<ol>
+<li>✅ Crea Edge Function <code>import-anac-data</code></li>
+<li>✅ Test import 100 record sample</li>
+<li>✅ Verifica mapping CPV → categorie esistenti</li>
+</ol>
+
+<h3>Questa settimana</h3>
+<ol>
+<li>🔄 Schedule cron job import giornaliero</li>
+<li>🔄 Implementa deduplicazione CIG</li>
+<li>🔄 Aggiungi filtri frontend per fonte dati</li>
+</ol>
+
+<h3>Prossime 2 settimane</h3>
+<ol>
+<li>📋 Scraping pilota 5 Albi Pretorio</li>
+<li>📋 Integrazione MePA catalogo</li>
+<li>📋 Dashboard qualità dati (coverage, freshness)</li>
+</ol>
+
+<h3>Demo a Marco</h3>
+<p><strong>Messaggio chiave:</strong> "Abbiamo 10k+ contratti reali da ANAC, stiamo espandendo copertura sottosoglia con scraping Albi Pretorio. Roadmap partnership TuttoGare per scala."</p>
+</div>
+
+<div class="section">
+<h2>🤔 Domande Aperte</h2>
+
+<ol>
+<li><strong>Budget per licenze dati?</strong> TuttoGare costa ~5k€/anno, vale la pena vs scraping?</li>
+<li><strong>Focus geografico?</strong> Partire da Toscana/Lombardia o copertura nazionale da subito?</li>
+<li><strong>Categorie prioritarie?</strong> Quali CPV generano più valore per clienti B2B?</li>
+<li><strong>Partnership Consip?</strong> Possibile co-marketing "Powered by MePA data"?</li>
+</ol>
+</div>
+
+<p class="meta" style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #333;">
+<strong>Freedom R&D Agent</strong> | Iteration #7<br>
+Prossima iterazione: implementazione Edge Function ANAC scraper<br>
+Status: <span class="status medium">ACTIONABLE - ready to code</span>
+</p>
+
+<p><a href="/">← Back to Index</a></p>
+
+</body>
+</html>
