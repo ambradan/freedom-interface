@@ -1,6 +1,6 @@
 {
-  "iterations": 7,
-  "last_project": "BenchmarkPA",
+  "iterations": 8,
+  "last_project": "Euryst",
   "findings": [
     {
       "iteration": 4,
@@ -24,5 +24,5 @@
       "ts": "2026-01-28T06:01:19.418989"
     }
   ],
-  "last_search": "data sourcing prezzi PA solution implementation guide 2024 2025"
+  "last_search": "WhatsApp API limits solution implementation guide 2024 2025"
 }
