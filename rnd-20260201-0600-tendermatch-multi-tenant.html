@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: TenderMatch - multi-tenant</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+pre { background: #222; padding: 15px; overflow-x: auto; border-left: 3px solid #0a0; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+th, td { padding: 10px; text-align: left; border-bottom: 1px solid #333; }
+th { color: #0f0; }
+.warning { background: #331a00; padding: 10px; border-left: 3px solid #ff6600; margin: 20px 0; }
+.tip { background: #1a3300; padding: 10px; border-left: 3px solid #0f0; margin: 20px 0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #11 | 2026-02-01 06:00</p>
+
+<h1>TenderMatch: Multi-Tenant Architecture</h1>
+
+<h2>Problema</h2>
+<p>TenderMatch deve supportare <strong>multiple organizzazioni</strong> (studi legali, consulenti, aziende) sulla stessa infrastruttura, garantendo:</p>
+<ul>
+<li><strong>Isolamento dati</strong>: ogni tenant vede solo i propri bandi e analisi</li>
+<li><strong>Performance</strong>: scalabilità orizzontale senza degrado</li>
+<li><strong>Billing separato</strong>: tracking consumi per tenant (API calls, storage, compute)</li>
+<li><strong>Customizzazione</strong>: configurazioni specifiche per tenant (criteri compliance, soglie, branding)</li>
+</ul>
+
+<div class="warning">
+<strong>⚠️ Rischio critico:</strong> In un sistema compliance-critical, un data leak tra tenant non è solo un bug — è una violazione legale potenzialmente catastrofica.
+</div>
+
+<h2>Stack Attuale</h2>
+<table>
+<tr><th>Layer</th><th>Tecnologia</th><th>Multi-tenant ready?</th></tr>
+<tr><td>Frontend</td><td>Lovable (React)</td><td>✅ Sì (con RLS)</td></tr>
+<tr><td>Database</td><td>Supabase PostgreSQL</td><td>✅ Sì (RLS nativo)</td></tr>
+<tr><td>Backend API</td><td>Express su Railway</td><td>⚠️ Richiede refactor</td></tr>
+<tr><td>Auth</td><td>Supabase Auth</td><td>✅ Sì (con metadata)</td></tr>
+<tr><td>Payments</td><td>Stripe</td><td>✅ Sì (con customer_id)</td></tr>
+<tr><td>Automation</td><td>Make</td><td>⚠️ Richiede webhook routing</td></tr>
+</table>
+
+<h2>Approcci Architetturali</h2>
+
+<h3>1. Row-Level Security (RLS) — Recommended</h3>
+<p><strong>Strategia:</strong> Database condiviso + isolamento a livello di riga via PostgreSQL RLS</p>
+
+<pre>
+-- Schema esempio
+CREATE TABLE tenders (
+  id UUID PRIMARY KEY,
+  tenant_id UUID NOT NULL REFERENCES tenants(id),
+  title TEXT,
+  analysis_result JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Policy RLS
+ALTER TABLE tenders ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation ON tenders
+  USING (tenant_id = current_setting('app.current_tenant')::UUID);
+</pre>
+
+<div class="tip">
+<strong>✅ Pro:</strong>
+<ul>
+<li>Supabase ha RLS nativo e performante</li>
+<li>Un solo database, costi operativi bassi</li>
+<li>Backup/restore semplificati</li>
+<li>Queries ottimizzate automaticamente</li>
+</ul>
+</div>
+
+<div class="warning">
+<strong>⚠️ Contro:</strong>
+<ul>
+<li>Richiede disciplina: OGNI query deve settare <code>app.current_tenant</code></li>
+<li>Un bug in una policy = data leak globale</li>
+<li>Difficile fare backup selettivi per tenant</li>
+</ul>
+</div>
+
+<h3>2. Schema Separation</h3>
+<p><strong>Strategia:</strong> Un PostgreSQL schema per tenant</p>
+
+<pre>
+-- Tenant A
+CREATE SCHEMA tenant_abc123;
+CREATE TABLE tenant_abc123.tenders (...);
+
+-- Tenant B
+CREATE SCHEMA tenant_xyz789;
+CREATE TABLE tenant_xyz789.tenders (...);
+</pre>
+
+<div class="tip">
+<strong>✅ Pro:</strong>
+<ul>
+<li>Isolamento forte a livello database</li>
+<li>Backup/restore per tenant facile</li>
+<li>Meno rischio di data leak accidentale</li>
+</ul>
+</div>
+
+<div class="warning">
+<strong>⚠️ Contro:</strong>
+<ul>
+<li>Supabase non supporta nativamente schema switching dinamico</li>
+<li>Migrazioni complesse (N schemi da aggiornare)</li>
+<li>Connection pooling meno efficiente</li>
+</ul>
+</div>
+
+<h3>3. Database per Tenant</h3>
+<p><strong>Strategia:</strong> Un database PostgreSQL separato per ogni tenant</p>
+
+<div class="warning">
+<strong>❌ Non raccomandato per TenderMatch perché:</strong>
+<ul>
+<li>Supabase addebita per progetto, non per database</li>
+<li>Costi esplodono con molti tenant</li>
+<li>Complessità operativa ingestibile</li>
+</ul>
+</div>
+
+<h2>Implementazione Consigliata per TenderMatch</h2>
+
+<h3>Step 1: Database Schema con RLS</h3>
+<pre>
+-- 1. Tabella tenants
+CREATE TABLE tenants (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  slug TEXT UNIQUE NOT NULL,
+  stripe_customer_id TEXT,
+  settings JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 2. Estendi auth.users con tenant_id
+ALTER TABLE auth.users ADD COLUMN tenant_id UUID REFERENCES tenants(id);
+
+-- 3. Aggiungi tenant_id a tutte le tabelle esistenti
+ALTER TABLE tenders ADD COLUMN tenant_id UUID REFERENCES tenants(id);
+ALTER TABLE compliance_analyses ADD COLUMN tenant_id UUID REFERENCES tenants(id);
+
+-- 4. Abilita RLS
+ALTER TABLE tenders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE compliance_analyses ENABLE ROW LEVEL SECURITY;
+
+-- 5. Policy base
+CREATE POLICY tenant_isolation_tenders ON tenders
+  FOR ALL
+  USING (tenant_id = (SELECT tenant_id FROM auth.users WHERE id = auth.uid()));
+
+CREATE POLICY tenant_isolation_analyses ON compliance_analyses
+  FOR ALL
+  USING (tenant_id = (SELECT tenant_id FROM auth.users WHERE id = auth.uid()));
+</pre>
+
+<h3>Step 2: Backend Middleware (Express)</h3>
+<pre>
+// middleware/tenantContext.ts
+import { Request, Response, NextFunction } from 'express';
+import { supabase } from '../lib/supabase';
+
+export async function tenantContext(req: Request, res: Response, next: NextFunction) {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  
+  if (!token) {
+    return res.status(401).json({ error: 'No token provided' });
+  }
+
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  
+  if (error || !user) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+
+  // Recupera tenant_id da user metadata
+  const tenantId = user.user_metadata?.tenant_id;
+  
+  if (!tenantId) {
+    return res.status(403).json({ error: 'User not associated with tenant' });
+  }
+
+  // Setta il contesto per Supabase
+  req.supabaseClient = supabase.rpc('set_tenant_context', { tenant_id: tenantId });
+  req.tenantId = tenantId;
+  
+  next();
+}
+
+// Applicalo a tutte le route protette
+app.use('/api/tenders', tenantContext, tendersRouter);
+app.use('/api/compliance', tenantContext, complianceRouter);
+</pre>
+
+<h3>Step 3: Frontend (Lovable/React)</h3>
+<pre>
+// hooks/useTenantContext.ts
+import { useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
+
+export function useTenantContext() {
+  useEffect(() => {
+    const setupTenant = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (user?.user_metadata?.tenant_id) {
+        // Supabase RLS gestisce automaticamente l'isolamento
+        // Non serve fare nulla qui, ma possiamo loggare per debug
+        console.log('[Tenant Context]', user.user_metadata.tenant_id);
+      }
+    };
+    
+    setupTenant();
+  }, []);
+}
+
+// Usa in App.tsx
+function App() {
+  useTenantContext();
+  // ... resto dell'app
+}
+</pre>
+
+<h3>Step 4: Billing per Tenant (Stripe)</h3>
+<pre>
+// services/billing.ts
+export async function trackTenantUsage(tenantId: string, eventType: string, quantity: number) {
+  const { data: tenant } = await supabase
+    .from('tenants')
+    .select('stripe_customer_id')
+    .eq('id', tenantId)
+    .single();
+
+  if (!tenant?.stripe_customer_id) {
+    throw new Error('Tenant not configured for billing');
+  }
+
+  // Registra usage in Stripe
+  await stripe.subscriptionItems.createUsageRecord(
+    tenant.stripe_subscription_item_id,
+    {
+      quantity,
+      timestamp: Math.floor(Date.now() / 1000),
+      action: 'increment',
+    }
+  );
+
+  // Log interno per analytics
+  await supabase.from('usage_logs').insert({
+    tenant_id: tenantId,
+    event_type: eventType,
+    quantity,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+// Esempio: tracking analisi compliance
+await trackTenantUsage(req.tenantId, 'compliance_analysis', 1);
+</pre>
+
+<h2>Risorse Utili</h2>
+<ul>
+<li><a href="https://supabase.com/docs/guides/auth/row-level-security" target="_blank">Supabase RLS Documentation</a></li>
+<li><a href="https://www.postgresql.org/docs/current/ddl-rowsecurity.html" target="_blank">PostgreSQL Row Security Policies</a></li>
+<li><a href="https://stripe.com/docs/billing/subscriptions/usage-based" target="_blank">Stripe Usage-Based Billing</a></li>
+<li><a href="https://github.com/supabase/supabase/discussions/1263" target="_blank">Supabase Multi-Tenant Patterns (GitHub Discussion)</a></li>
+</ul>
+
+<h2>Test Checklist per Ambra</h2>
+<ol>
+<li><strong>Isolamento dati:</strong> Crea 2 tenant, verifica che User A non veda dati di User B</li>
+<li><strong>Performance:</strong> Benchmark query con RLS vs senza (dovrebbe essere <5% overhead)</li>
+<li><strong>Billing tracking:</strong> Esegui 10 analisi, verifica che Stripe registri correttamente usage</li>
+<li><strong>Onboarding tenant:</strong> Flow completo signup → creazione tenant → primo bando</li>
+<li><strong>Backup selettivo:</strong> Testa export dati per singolo tenant</li>
+</ol>
+
+<h2>Next Steps</h2>
+<ol>
+<li><strong>Migrazione schema:</strong> Aggiungi <code>tenant_id</code> a tutte le tabelle esistenti</li>
+<li><strong>RLS policies:</strong> Implementa e testa policy per ogni tabella</li>
+<li><strong>Backend refactor:</strong> Aggiungi middleware <code>tenantContext</code></li>
+<li><strong>Stripe setup:</strong> Configura usage-based billing per tenant</li>
+<li><strong>Admin panel:</strong> Crea interfaccia per gestione tenant (Lovable)</li>
+<li><strong>Monitoring:</strong> Setup alerts per violazioni RLS (Supabase logs)</li>
+</ol>
+
+<div class="tip">
+<strong>💡 Quick Win:</strong> Inizia con un solo tenant "demo" per testare l'architettura, poi scala progressivamente. Non serve implementare tutto subito.
+</div>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>

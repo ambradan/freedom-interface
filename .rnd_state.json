@@ -1,5 +1,5 @@
 {
-  "iterations": 10,
+  "iterations": 11,
   "last_project": "TenderMatch",
   "findings": [
     {
@@ -22,7 +22,14 @@
       "problem": "data sourcing prezzi PA",
       "page": "rnd-20260128-0601-benchmarkpa-data-sourcing-prezzi-PA.html",
       "ts": "2026-01-28T06:01:19.418989"
+    },
+    {
+      "iteration": 11,
+      "project": "TenderMatch",
+      "problem": "multi-tenant",
+      "page": "rnd-20260201-0600-tendermatch-multi-tenant.html",
+      "ts": "2026-02-01T06:00:57.434245"
     }
   ],
-  "last_search": "scaling solution implementation guide 2024 2025"
+  "last_search": "multi-tenant solution implementation guide 2024 2025"
 }
