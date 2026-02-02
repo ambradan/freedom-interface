@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: BenchmarkPA - data sourcing prezzi PA</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #331a00; border-left: 3px solid #ff6600; padding: 10px; margin: 15px 0; }
+.success { background: #1a3300; border-left: 3px solid #00ff00; padding: 10px; margin: 15px 0; }
+table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+th, td { border: 1px solid #333; padding: 8px; text-align: left; }
+th { background: #222; color: #0f0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #12 | 2026-02-02 06:00</p>
+<h1>BenchmarkPA: data sourcing prezzi PA</h1>
+
+<h2>Il Problema</h2>
+<p>BenchmarkPA necessita di dati reali sui prezzi delle gare pubbliche italiane per generare benchmark affidabili. Il problema principale è che:</p>
+<ul>
+<li><strong>API ANAC restituisce HTML invece di JSON</strong> - l'endpoint testato non è un'API REST standard</li>
+<li><strong>Dati frammentati</strong> - informazioni distribuite tra ANAC, Consip, portali regionali</li>
+<li><strong>Qualità variabile</strong> - prezzi spesso aggregati, mancano dettagli granulari</li>
+<li><strong>Accesso limitato</strong> - alcune banche dati richiedono credenziali o sono a pagamento</li>
+</ul>
+
+<div class="warning">
+<strong>⚠️ Stato attuale:</strong> Sistema funziona con 150 price points sample. Necessario passare a dati reali ANAC per validazione con Marco.
+</div>
+
+<h2>Fonti Dati Disponibili</h2>
+
+<table>
+<thead>
+<tr>
+<th>Fonte</th>
+<th>Tipo</th>
+<th>Copertura</th>
+<th>Accessibilità</th>
+<th>Formato</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>ANAC OpenData</strong></td>
+<td>Gare pubbliche</td>
+<td>Nazionale, tutte PA</td>
+<td>Pubblica</td>
+<td>XML, CSV (non JSON diretto)</td>
+</tr>
+<tr>
+<td><strong>Consip Portale</strong></td>
+<td>Convenzioni attive</td>
+<td>Nazionale, convenzioni</td>
+<td>Pubblica</td>
+<td>Web scraping necessario</td>
+</tr>
+<tr>
+<td><strong>BDNCP</strong></td>
+<td>Banca Dati Contratti</td>
+<td>Nazionale</td>
+<td>Credenziali richieste</td>
+<td>Web interface</td>
+</tr>
+<tr>
+<td><strong>Portali regionali</strong></td>
+<td>Gare locali</td>
+<td>Regionale</td>
+<td>Variabile</td>
+<td>Eterogeneo</td>
+</tr>
+</tbody>
+</table>
+
+<h2>Approccio ANAC - Soluzione Tecnica</h2>
+
+<h3>1. Identificare endpoint corretto</h3>
+<p>L'endpoint testato (<code>dati.anticorruzione.it/opendata/dataset/cig.json</code>) restituisce HTML perché probabilmente è:</p>
+<ul>
+<li>Una pagina web del portale CKAN, non un endpoint API diretto</li>
+<li>Richiede autenticazione o parametri specifici</li>
+</ul>
+
+<div class="success">
+<strong>✓ Endpoint corretto ANAC:</strong>
+<pre><code>https://dati.anticorruzione.it/api/3/action/datastore_search
+?resource_id=[RESOURCE_ID]
+&limit=1000</code></pre>
+<p>Dove RESOURCE_ID va identificato tramite catalogo CKAN.</p>
+</div>
+
+<h3>2. Workflow di import</h3>
+<pre><code>1. Identificare resource_id corretto dal catalogo ANAC
+2. Query API CKAN con filtri:
+   - CPV code (categoria merceologica)
+   - Data pubblicazione (ultimi 12 mesi per benchmark fresh)
+   - Importo contratto
+3. Normalizzare dati:
+   - Estrarre prezzo_unitario da importo_totale/quantità
+   - Mappare CPV → category_id interno
+   - Validare range prezzi (outlier detection)
+4. Inserire in price_points con IFX tagging</code></pre>
+
+<h3>3. Codice esempio (Edge Function)</h3>
+<pre><code>// supabase/functions/import-anac/index.ts
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const ANAC_API = "https://dati.anticorruzione.it/api/3/action/datastore_search";
+const RESOURCE_ID = "..."; // Da identificare
+
+serve(async (req) => {
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+
+  // Fetch da ANAC
+  const response = await fetch(
+    `${ANAC_API}?resource_id=${RESOURCE_ID}&limit=1000&filters={"cpv":"45000000"}`
+  );
+  const data = await response.json();
+
+  // Normalizza e inserisci
+  for (const record of data.result.records) {
+    const { error } = await supabase.from("price_points").insert({
+      category_id: mapCPVtoCategory(record.cpv),
+      prezzo_unitario: record.importo / record.quantita,
+      prezzo_totale: record.importo,
+      quantita: record.quantita,
+      fonte: "ANAC",
+      fonte_id: record.cig,
+      data_aggiudicazione: record.data_aggiudicazione,
+    });
+  }
+
+  return new Response(JSON.stringify({ imported: data.result.records.length }));
+});</code></pre>
+
+<h2>Approccio Alternativo: Web Scraping Consip</h2>
+
+<p>Se ANAC API non fornisce granularità sufficiente, Consip pubblica convenzioni dettagliate con prezzi unitari:</p>
+
+<pre><code>// Esempio scraping Consip (Puppeteer/Playwright)
+const convenzioni = await page.$$eval('.convenzione-card', cards => 
+  cards.map(c => ({
+    categoria: c.querySelector('.categoria').textContent,
+    fornitore: c.querySelector('.fornitore').textContent,
+    prezzo: parseFloat(c.querySelector('.prezzo').textContent),
+    url: c.querySelector('a').href
+  }))
+);</code></pre>
+
+<div class="warning">
+<strong>⚠️ Attenzione:</strong> Web scraping è fragile (cambi layout) e può violare ToS. Verificare sempre termini d'uso.
+</div>
+
+<h2>Strategia Ibrida (Raccomandato)</h2>
+
+<ol>
+<li><strong>Layer 1 - ANAC API</strong>: dati strutturati bulk (gare sopra soglia, affidamenti diretti)</li>
+<li><strong>Layer 2 - Consip scraping</strong>: convenzioni attive con prezzi dettagliati</li>
+<li><strong>Layer 3 - Crowdsourcing</strong>: form per PA/fornitori per submit prezzi (validati con IFX)</li>
+</ol>
+
+<h2>Validazione Dati con IFX</h2>
+
+<p>Ogni price point importato passa attraverso IFX per:</p>
+<ul>
+<li><strong>Outlier detection</strong>: prezzi fuori 3σ dalla media categoria</li>
+<li><strong>Source verification</strong>: CIG valido, PA esistente</li>
+<li><strong>Temporal coherence</strong>: prezzi coerenti con inflazione/trend</li>
+</ul>
+
+<pre><code>// Esempio IFX check
+const ifxResult = await verifyPricePoint({
+  prezzo: 15000,
+  categoria: "PULIZIA",
+  fonte: "ANAC",
+  fonte_id: "CIG123456"
+});
+
+if (ifxResult.confidence < 0.7) {
+  // Flagga per review manuale
+  await flagForReview(pricePoint, ifxResult.limitations);
+}</code></pre>
+
+<h2>Risorse Utili</h2>
+
+<ul>
+<li><a href="https://dati.anticorruzione.it">ANAC OpenData Portal</a></li>
+<li><a href="https://docs.ckan.org/en/2.9/api/">CKAN API Documentation</a></li>
+<li><a href="https://www.consip.it">Consip - Convenzioni</a></li>
+<li><a href="https://www.serviziocontrattipubblici.it">BDNCP - Banca Dati Contratti</a></li>
+<li><a href="https://github.com/italia/daf-recipes">DAF Recipes - Dataset PA italiani</a></li>
+</ul>
+
+<h2>Next Steps per Ambra</h2>
+
+<h3>Immediato (prima di demo Marco)</h3>
+<ol>
+<li><strong>Identificare RESOURCE_ID ANAC</strong>
+   <ul>
+   <li>Vai su <code>dati.anticorruzione.it</code></li>
+   <li>Cerca dataset "Contratti Pubblici" o "CIG"</li>
+   <li>Copia resource_id dall'URL o metadata</li>
+   </ul>
+</li>
+<li><strong>Test API call manuale</strong>
+   <pre><code>curl "https://dati.anticorruzione.it/api/3/action/datastore_search?resource_id=[ID]&limit=10"</code></pre>
+</li>
+<li><strong>Se funziona</strong>: adatta script import con resource_id corretto</li>
+<li><strong>Se non funziona</strong>: pivot su Consip scraping o dati sample + disclaimer</li>
+</ol>
+
+<h3>Medio termine</h3>
+<ol>
+<li>Implementare Edge Function import ANAC con cron (daily/weekly)</li>
+<li>Setup validation pipeline con IFX</li>
+<li>Dashboard admin per review price points flaggati</li>
+<li>Documentare data lineage (fonte → trasformazioni → DB)</li>
+</ol>
+
+<h3>Lungo termine</h3>
+<ol>
+<li>Partnership con ANAC per accesso diretto/prioritario</li>
+<li>Integrazione BDNCP (se possibile ottenere credenziali)</li>
+<li>Crowdsourcing layer per PA (submit prezzi verificati)</li>
+</ol>
+
+<div class="success">
+<strong>✓ Quick win:</strong> Per demo Marco, usa dati sample + disclaimer "Dati ANAC in integrazione". Mostra architettura pronta per import reale. Evidenzia IFX validation come differenziatore vs competitor.
+</div>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
