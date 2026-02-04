@@ -1,6 +1,6 @@
 {
-  "iterations": 13,
-  "last_project": "TechPulse",
+  "iterations": 14,
+  "last_project": "Euryst",
   "findings": [
     {
       "iteration": 4,
@@ -36,7 +36,14 @@
       "problem": "data sourcing prezzi PA",
       "page": "rnd-20260202-0600-benchmarkpa-data-sourcing-prezzi-PA.html",
       "ts": "2026-02-02T06:00:58.261507"
+    },
+    {
+      "iteration": 14,
+      "project": "Euryst",
+      "problem": "memory persistence",
+      "page": "rnd-20260204-0600-euryst-memory-persistence.html",
+      "ts": "2026-02-04T06:00:39.020098"
     }
   ],
-  "last_search": "data freshness solution implementation guide 2024 2025"
+  "last_search": "memory persistence solution implementation guide 2024 2025"
 }

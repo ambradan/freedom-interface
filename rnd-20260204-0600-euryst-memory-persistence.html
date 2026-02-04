@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: Euryst - memory persistence</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #331a00; border-left: 3px solid #ff6600; padding: 10px; margin: 15px 0; }
+.success { background: #1a3300; border-left: 3px solid #00ff00; padding: 10px; margin: 15px 0; }
+table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+th, td { border: 1px solid #333; padding: 8px; text-align: left; }
+th { background: #222; color: #0f0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #14 | 2026-02-04 06:00</p>
+<h1>Euryst: memory persistence</h1>
+
+<h2>Il Problema</h2>
+<p>Euryst è un AI agent WhatsApp che funge da layer cognitivo persistente per founder. Il problema centrale è mantenere memoria conversazionale attraverso sessioni WhatsApp, dove ogni messaggio è tecnicamente una nuova interazione stateless.</p>
+
+<div class="warning">
+<strong>Sfida chiave:</strong> WhatsApp Business API non mantiene stato tra messaggi. Ogni webhook è isolato, ma il founder si aspetta che l'agent "ricordi" conversazioni precedenti, contesto aziendale, decisioni prese.
+</div>
+
+<h2>Approcci Comuni</h2>
+
+<h3>1. Database Conversazionale</h3>
+<p>Soluzione standard: salvare ogni messaggio con metadata ricchi.</p>
+<code>user_id → conversation_history → embeddings → retrieval</code>
+
+<table>
+<tr>
+<th>Pro</th>
+<th>Contro</th>
+</tr>
+<tr>
+<td>Persistenza garantita</td>
+<td>Latenza di retrieval</td>
+</tr>
+<tr>
+<td>Ricerca semantica</td>
+<td>Costo embeddings</td>
+</tr>
+<tr>
+<td>Analisi storica</td>
+<td>Context window limits</td>
+</tr>
+</table>
+
+<h3>2. Hybrid Memory Architecture</h3>
+<p>Combinazione di memoria a breve termine (in-memory) e lungo termine (database):</p>
+<ul>
+<li><strong>Working Memory:</strong> Ultimi N messaggi sempre caricati</li>
+<li><strong>Semantic Memory:</strong> Retrieval solo quando necessario</li>
+<li><strong>Episodic Memory:</strong> Eventi chiave marcati manualmente</li>
+</ul>
+
+<h3>3. Structured Context Injection</h3>
+<p>Invece di caricare tutto lo storico, mantenere un "context summary" aggiornato:</p>
+<pre>
+{
+  "founder_profile": {...},
+  "active_projects": [...],
+  "recent_decisions": [...],
+  "pending_actions": [...]
+}
+</pre>
+
+<h2>Stack Tecnologico Suggerito</h2>
+
+<h3>Storage Layer</h3>
+<ul>
+<li><strong>PostgreSQL + pgvector:</strong> Per embeddings e ricerca semantica</li>
+<li><strong>Redis:</strong> Cache working memory (ultimi 20 messaggi)</li>
+<li><strong>Supabase:</strong> Se vuoi tutto managed</li>
+</ul>
+
+<h3>Embedding & Retrieval</h3>
+<ul>
+<li><strong>OpenAI text-embedding-3-small:</strong> Veloce ed economico</li>
+<li><strong>Pinecone/Weaviate:</strong> Se vuoi vector DB dedicato</li>
+<li><strong>LangChain Memory:</strong> Astrazioni già pronte</li>
+</ul>
+
+<h3>WhatsApp Integration</h3>
+<pre>
+Webhook → Load Context → LLM Call → Save Response → Send via API
+         ↓
+    [Redis Cache]
+         ↓
+    [PostgreSQL]
+</pre>
+
+<h2>Implementazione Pratica</h2>
+
+<h3>Fase 1: Minimal Viable Memory</h3>
+<ol>
+<li>Salva ogni messaggio in DB con timestamp</li>
+<li>Carica ultimi 10 messaggi ad ogni webhook</li>
+<li>Passa tutto al LLM come context</li>
+</ol>
+
+<h3>Fase 2: Semantic Retrieval</h3>
+<ol>
+<li>Genera embeddings per ogni messaggio</li>
+<li>Su nuovo messaggio, fai similarity search</li>
+<li>Carica top-5 messaggi rilevanti + ultimi 10</li>
+</ol>
+
+<h3>Fase 3: Structured Memory</h3>
+<ol>
+<li>Estrai entità (progetti, persone, decisioni)</li>
+<li>Mantieni knowledge graph</li>
+<li>LLM interroga graph quando serve</li>
+</ol>
+
+<h2>Risorse Utili</h2>
+
+<h3>Documentation</h3>
+<ul>
+<li><a href="https://platform.openai.com/docs/guides/embeddings">OpenAI Embeddings Guide</a></li>
+<li><a href="https://js.langchain.com/docs/modules/memory/">LangChain Memory Module</a></li>
+<li><a href="https://supabase.com/docs/guides/ai">Supabase AI & Vectors</a></li>
+</ul>
+
+<h3>Code Examples</h3>
+<ul>
+<li><a href="https://github.com/hwchase17/langchain/tree/master/libs/langchain/langchain/memory">LangChain Memory Implementations</a></li>
+<li><a href="https://github.com/openai/openai-cookbook/blob/main/examples/Question_answering_using_embeddings.ipynb">OpenAI QA with Embeddings</a></li>
+</ul>
+
+<h3>Papers & Articles</h3>
+<ul>
+<li>"Generative Agents: Interactive Simulacra of Human Behavior" (Stanford, 2023)</li>
+<li>"MemGPT: Towards LLMs as Operating Systems" (UC Berkeley, 2023)</li>
+</ul>
+
+<h2>Metriche da Tracciare</h2>
+<ul>
+<li><strong>Context Relevance:</strong> % di retrieval utili vs rumore</li>
+<li><strong>Latency:</strong> Tempo da webhook a risposta</li>
+<li><strong>Cost:</strong> Embedding + storage + LLM calls</li>
+<li><strong>User Satisfaction:</strong> Quante volte il founder deve ripetere info</li>
+</ul>
+
+<h2>Prossimi Step per Ambra</h2>
+
+<div class="success">
+<strong>Step 1:</strong> Scegli database (PostgreSQL + pgvector consigliato)
+</div>
+
+<div class="success">
+<strong>Step 2:</strong> Implementa minimal memory (salva + carica ultimi 10 messaggi)
+</div>
+
+<div class="success">
+<strong>Step 3:</strong> Aggiungi embeddings per semantic retrieval
+</div>
+
+<div class="success">
+<strong>Step 4:</strong> Testa con utenti reali, misura latency e relevance
+</div>
+
+<div class="success">
+<strong>Step 5:</strong> Itera verso structured memory se necessario
+</div>
+
+<h2>Domande Chiave</h2>
+<ul>
+<li>Quanti founder useranno Euryst? (Impatta scelta database)</li>
+<li>Quanto storico serve? (7 giorni? 6 mesi? Tutto?)</li>
+<li>Budget latency? (Sub-secondo? 2-3 secondi OK?)</li>
+<li>Budget costo? (Embeddings costano, ma poco)</li>
+</ul>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
