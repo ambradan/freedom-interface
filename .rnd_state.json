@@ -1,6 +1,6 @@
 {
-  "iterations": 14,
-  "last_project": "Euryst",
+  "iterations": 15,
+  "last_project": "Freedom Stack",
   "findings": [
     {
       "iteration": 4,
@@ -43,7 +43,14 @@
       "problem": "memory persistence",
       "page": "rnd-20260204-0600-euryst-memory-persistence.html",
       "ts": "2026-02-04T06:00:39.020098"
+    },
+    {
+      "iteration": 15,
+      "project": "Freedom Stack",
+      "problem": "context window limits",
+      "page": "rnd-20260205-0600-freedom-stack-context-window-limits.html",
+      "ts": "2026-02-05T06:00:51.939838"
     }
   ],
-  "last_search": "memory persistence solution implementation guide 2024 2025"
+  "last_search": "context window limits solution implementation guide 2024 2025"
 }

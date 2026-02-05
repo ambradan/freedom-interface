@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: Freedom Stack - context window limits</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #331100; border-left: 3px solid #ff6600; padding: 10px; margin: 15px 0; }
+.solution { background: #003311; border-left: 3px solid #00ff66; padding: 10px; margin: 15px 0; }
+pre { background: #222; padding: 15px; overflow-x: auto; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #15 | 2026-02-05 06:00</p>
+<h1>Freedom Stack: context window limits</h1>
+
+<h2>🔴 Il Problema</h2>
+<p>Freedom Stack accumula memoria episodica infinita (Qdrant + Neo4j + PostgreSQL), ma ogni interazione è limitata dal <strong>context window</strong> del modello LLM.</p>
+
+<div class="warning">
+<strong>Sintomi critici:</strong>
+<ul>
+<li>Conversazioni lunghe causano troncamento della memoria</li>
+<li>Il sistema "dimentica" informazioni recenti quando il contesto si riempie</li>
+<li>RAG retrieval diventa inefficace con troppe memorie candidate</li>
+<li>Costi API esplodono con contesti pieni (Claude: ~200k token max)</li>
+</ul>
+</div>
+
+<h2>⚙️ Architettura Attuale</h2>
+<pre>
+Telegram Bot → FastAPI → RLM Scaffold
+                           ↓
+                    Qdrant (vector search)
+                           ↓
+                    Claude API (200k context)
+                           ↓
+                    Response + Memory Update
+</pre>
+
+<p><strong>Problema:</strong> Ogni chiamata a Claude include:</p>
+<ul>
+<li>System prompt (~2k tokens)</li>
+<li>Conversazione corrente (~variabile)</li>
+<li>3-5 memorie recuperate da RAG (~5-10k tokens)</li>
+<li>Metadata e istruzioni (~1k tokens)</li>
+</ul>
+
+<p>Con conversazioni lunghe (>50 messaggi), il contesto supera il limite.</p>
+
+<h2>✅ Soluzioni Implementabili</h2>
+
+<div class="solution">
+<h3>1. Sliding Window con Summarization</h3>
+<p>Mantieni solo gli ultimi N messaggi nel contesto, riassumi il resto.</p>
+<pre>
+# In scaffold.py
+def compress_history(messages, max_messages=20):
+    if len(messages) <= max_messages:
+        return messages
+    
+    # Riassumi i vecchi messaggi
+    old_messages = messages[:-max_messages]
+    summary = llm.summarize(old_messages)
+    
+    return [{"role": "system", "content": f"Riassunto: {summary}"}] + messages[-max_messages:]
+</pre>
+<strong>Pro:</strong> Semplice, riduce token usage<br>
+<strong>Contro:</strong> Perde dettagli storici
+</div>
+
+<div class="solution">
+<h3>2. Hierarchical Memory (RAG Avanzato)</h3>
+<p>Usa Qdrant per recuperare solo memorie <em>rilevanti</em> invece di tutta la storia.</p>
+<pre>
+# Query semantica su Qdrant
+relevant_memories = qdrant.search(
+    collection="freedom_memories",
+    query_vector=embed(current_message),
+    limit=3  # Solo le top-3 più rilevanti
+)
+
+# Inserisci nel contesto
+context = system_prompt + relevant_memories + current_conversation[-10:]
+</pre>
+<strong>Pro:</strong> Scalabile, mantiene rilevanza<br>
+<strong>Contro:</strong> Rischio di perdere contesto critico
+</div>
+
+<div class="solution">
+<h3>3. Multi-Stage Processing</h3>
+<p>Dividi il lavoro in fasi: retrieval → reasoning → response.</p>
+<pre>
+# Stage 1: Retrieval
+memories = qdrant.search(query, limit=10)
+
+# Stage 2: Filter con LLM leggero
+filtered = lightweight_llm.filter_relevant(memories, query)
+
+# Stage 3: Response con LLM principale
+response = claude.generate(filtered + current_context)
+</pre>
+<strong>Pro:</strong> Ottimizza uso di modelli costosi<br>
+<strong>Contro:</strong> Latenza aumentata
+</div>
+
+<div class="solution">
+<h3>4. Adaptive Context Compression</h3>
+<p>Usa <code>anthropic.beta.prompt_caching</code> per riutilizzare parti del contesto.</p>
+<pre>
+# Cache system prompt + memorie statiche
+cached_context = {
+    "system": system_prompt,
+    "memories": top_5_memories,
+    "cache_control": {"type": "ephemeral"}
+}
+
+# Solo la conversazione cambia
+response = claude.messages.create(
+    model="claude-3-5-sonnet-20241022",
+    system=[cached_context],
+    messages=current_conversation
+)
+</pre>
+<strong>Pro:</strong> Riduce costi del 90% su token ripetuti<br>
+<strong>Contro:</strong> Richiede Anthropic API beta
+</div>
+
+<h2>📊 Comparazione Approcci</h2>
+<table style="width:100%; border-collapse: collapse;">
+<tr style="border-bottom: 1px solid #333;">
+<th style="text-align:left; padding:8px;">Approccio</th>
+<th style="padding:8px;">Complessità</th>
+<th style="padding:8px;">Costi</th>
+<th style="padding:8px;">Scalabilità</th>
+</tr>
+<tr style="border-bottom: 1px solid #222;">
+<td style="padding:8px;">Sliding Window</td>
+<td style="padding:8px;">⭐</td>
+<td style="padding:8px;">⭐⭐⭐</td>
+<td style="padding:8px;">⭐⭐</td>
+</tr>
+<tr style="border-bottom: 1px solid #222;">
+<td style="padding:8px;">Hierarchical RAG</td>
+<td style="padding:8px;">⭐⭐</td>
+<td style="padding:8px;">⭐⭐⭐</td>
+<td style="padding:8px;">⭐⭐⭐</td>
+</tr>
+<tr style="border-bottom: 1px solid #222;">
+<td style="padding:8px;">Multi-Stage</td>
+<td style="padding:8px;">⭐⭐⭐</td>
+<td style="padding:8px;">⭐⭐</td>
+<td style="padding:8px;">⭐⭐⭐</td>
+</tr>
+<tr>
+<td style="padding:8px;">Prompt Caching</td>
+<td style="padding:8px;">⭐⭐</td>
+<td style="padding:8px;">⭐⭐⭐⭐</td>
+<td style="padding:8px;">⭐⭐⭐</td>
+</tr>
+</table>
+
+<h2>🔧 Implementazione Consigliata per Freedom Stack</h2>
+<p><strong>Approccio ibrido:</strong></p>
+<ol>
+<li><strong>Usa Hierarchical RAG</strong> (già implementato in Qdrant)</li>
+<li><strong>Aggiungi Sliding Window</strong> per conversazioni lunghe</li>
+<li><strong>Implementa Prompt Caching</strong> per system prompt + memorie core</li>
+</ol>
+
+<h3>Codice da aggiungere a scaffold.py</h3>
+<pre>
+# Dopo il RAG retrieval
+def prepare_context(memories, conversation, max_conv_length=15):
+    # Limita conversazione recente
+    recent_conv = conversation[-max_conv_length:]
+    
+    # Riassumi se troppo lunga
+    if len(conversation) > max_conv_length:
+        summary = summarize_old_messages(conversation[:-max_conv_length])
+        recent_conv.insert(0, {"role": "system", "content": f"[Storia precedente: {summary}]"})
+    
+    # Combina con memorie RAG
+    return {
+        "system": SYSTEM_PROMPT,  # Cache questo
+        "memories": memories[:3],  # Top-3 da Qdrant
+        "conversation": recent_conv
+    }
+</pre>
+
+<h2>📚 Risorse Utili</h2>
+<ul>
+<li><a href="https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching">Anthropic Prompt Caching</a> - Riduce costi del 90%</li>
+<li><a href="https://python.langchain.com/docs/modules/memory/types/summary">LangChain Conversation Summary</a> - Pattern per summarization</li>
+<li><a href="https://qdrant.tech/documentation/tutorials/neural-search/">Qdrant Neural Search</a> - Ottimizzazione retrieval</li>
+<li><a href="https://github.com/openai/openai-cookbook/blob/main/examples/How_to_count_tokens_with_tiktoken.ipynb">Token Counting Best Practices</a></li>
+</ul>
+
+<h2>🎯 Next Steps per Ambra</h2>
+<ol>
+<li><strong>Misura il problema:</strong>
+<pre>
+# Aggiungi logging in telegram_bot.py
+import tiktoken
+enc = tiktoken.encoding_for_model("gpt-4")
+token_count = len(enc.encode(full_context))
+logger.info(f"Context tokens: {token_count}")
+</pre>
+</li>
+<li><strong>Implementa sliding window</strong> (quick win, 30min)</li>
+<li><strong>Testa con conversazioni >50 messaggi</strong></li>
+<li><strong>Se funziona, aggiungi prompt caching</strong> per ridurre costi</li>
+<li><strong>Monitora metriche:</strong>
+<ul>
+<li>Token usage medio per richiesta</li>
+<li>Latenza risposta</li>
+<li>Qualità delle risposte (feedback /good /bad)</li>
+</ul>
+</li>
+</ol>
+
+<h2>⚠️ Attenzione</h2>
+<p>Con l'architettura attuale (Telegram + FastAPI + Claude), ogni conversazione lunga rischia di:</p>
+<ul>
+<li>Superare 200k token (limite Claude 3.5 Sonnet)</li>
+<li>Costare >$1 per singola risposta</li>
+<li>Causare timeout API (>30s)</li>
+</ul>
+
+<p><strong>Priorità ALTA:</strong> Implementa sliding window questa settimana.</p>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
