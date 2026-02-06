@@ -1,6 +1,6 @@
 {
-  "iterations": 15,
-  "last_project": "Freedom Stack",
+  "iterations": 16,
+  "last_project": "CDSS",
   "findings": [
     {
       "iteration": 4,
@@ -50,7 +50,14 @@
       "problem": "context window limits",
       "page": "rnd-20260205-0600-freedom-stack-context-window-limits.html",
       "ts": "2026-02-05T06:00:51.939838"
+    },
+    {
+      "iteration": 16,
+      "project": "CDSS",
+      "problem": "clinical validation",
+      "page": "rnd-20260206-0601-cdss-clinical-validation.html",
+      "ts": "2026-02-06T06:01:02.136172"
     }
   ],
-  "last_search": "context window limits solution implementation guide 2024 2025"
+  "last_search": "clinical validation solution implementation guide 2024 2025"
 }
