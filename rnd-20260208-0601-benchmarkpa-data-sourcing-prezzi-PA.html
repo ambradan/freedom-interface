@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: BenchmarkPA - data sourcing prezzi PA</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; border-radius: 3px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #331a00; border-left: 3px solid #ff6600; padding: 10px; margin: 15px 0; }
+.success { background: #1a3300; border-left: 3px solid #00ff00; padding: 10px; margin: 15px 0; }
+table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+th, td { border: 1px solid #333; padding: 8px; text-align: left; }
+th { background: #222; color: #0f0; }
+ul { line-height: 1.8; }
+.code-block { background: #1a1a1a; padding: 15px; border-left: 3px solid #0a0; overflow-x: auto; margin: 15px 0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #18 | 2026-02-08 06:00</p>
+<h1>BenchmarkPA: data sourcing prezzi PA</h1>
+
+<h2>Il Problema</h2>
+<p>BenchmarkPA necessita di <strong>dati reali sui prezzi delle gare pubbliche italiane</strong> per generare benchmark affidabili. Il problema è multi-dimensionale:</p>
+
+<ul>
+<li><strong>Volume</strong>: ~500K gare/anno sotto soglia comunitaria (€214K lavori, €140K servizi/forniture)</li>
+<li><strong>Frammentazione</strong>: dati distribuiti su ~11K stazioni appaltanti</li>
+<li><strong>Qualità</strong>: mancanza standardizzazione, errori di classificazione CPV</li>
+<li><strong>Accesso</strong>: API ANAC limitata, portali regionali non uniformi</li>
+<li><strong>Latenza</strong>: pubblicazione ritardata (30-90 giorni post-aggiudicazione)</li>
+</ul>
+
+<div class="warning">
+<strong>⚠️ Criticità MVP</strong><br>
+Senza dati reali, il prodotto non ha valore. La qualità del benchmark dipende direttamente dalla completezza e accuratezza del dataset.
+</div>
+
+<h2>Fonti Dati Disponibili</h2>
+
+<table>
+<tr>
+<th>Fonte</th>
+<th>Copertura</th>
+<th>Formato</th>
+<th>Accesso</th>
+<th>Limitazioni</th>
+</tr>
+<tr>
+<td><strong>ANAC OpenData</strong></td>
+<td>~80% gare sopra €40K</td>
+<td>XML/CSV</td>
+<td>Download bulk</td>
+<td>Update mensile, no API real-time</td>
+</tr>
+<tr>
+<td><strong>Bandi di Gara (portale)</strong></td>
+<td>Gare sopra soglia</td>
+<td>HTML scraping</td>
+<td>Pubblico</td>
+<td>Rate limiting, struttura variabile</td>
+</tr>
+<tr>
+<td><strong>Portali regionali</strong></td>
+<td>Variabile (10-30%)</td>
+<td>Eterogeneo</td>
+<td>Pubblico</td>
+<td>Non standardizzato, 20+ portali diversi</td>
+</tr>
+<tr>
+<td><strong>MEPA (Mercato Elettronico PA)</strong></td>
+<td>Acquisti diretti</td>
+<td>Non pubblico</td>
+<td>Richiesta formale</td>
+<td>Dati aggregati, no dettaglio singole transazioni</td>
+</tr>
+<tr>
+<td><strong>Albo Fornitori PA</strong></td>
+<td>Contratti quadro</td>
+<td>PDF/HTML</td>
+<td>Pubblico</td>
+<td>Dati sparsi, no struttura uniforme</td>
+</tr>
+</table>
+
+<h2>Approccio Strategico per MVP</h2>
+
+<h3>Fase 1: Baseline Dataset (settimane 1-2)</h3>
+<div class="code-block">
+<strong>Obiettivo</strong>: 10K price points su 3 categorie prioritarie<br>
+<strong>Fonte primaria</strong>: ANAC OpenData (dataset CIG)<br>
+<strong>Categorie focus</strong>:
+<ul style="margin: 10px 0;">
+<li>90919200-4 (Pulizia edifici) - ~15K gare/anno</li>
+<li>50700000-2 (Manutenzione impianti) - ~12K gare/anno</li>
+<li>79710000-4 (Servizi vigilanza) - ~8K gare/anno</li>
+</ul>
+</div>
+
+<p><strong>Pipeline tecnica</strong>:</p>
+<ol>
+<li>Download dataset ANAC mensile (formato XML, ~2GB)</li>
+<li>Parser XML → PostgreSQL staging table</li>
+<li>Data cleaning: filtro CPV, validazione importi, dedup CIG</li>
+<li>Normalizzazione: conversione unità, calcolo prezzi unitari</li>
+<li>Insert in <code>price_points</code> table</li>
+</ol>
+
+<h3>Fase 2: Enrichment (settimane 3-4)</h3>
+<ul>
+<li><strong>Geocoding</strong>: mapping CF stazione appaltante → regione/provincia</li>
+<li><strong>Temporal features</strong>: estrazione anno, trimestre, stagionalità</li>
+<li><strong>Outlier detection</strong>: rimozione prezzi anomali (Z-score > 3)</li>
+<li><strong>Metadata extraction</strong>: parsing descrizione gara per keyword rilevanti</li>
+</ul>
+
+<h3>Fase 3: Continuous Update (post-MVP)</h3>
+<ul>
+<li>Cron job settimanale per fetch incrementale nuovi CIG</li>
+<li>Webhook ANAC (se disponibile) per update real-time</li>
+<li>Integrazione portali regionali via scraping (Selenium/Playwright)</li>
+</ul>
+
+<h2>Implementazione Tecnica</h2>
+
+<h3>Stack Proposto</h3>
+<div class="code-block">
+<strong>Data Pipeline</strong>: Python + Pandas + SQLAlchemy<br>
+<strong>Storage</strong>: Supabase PostgreSQL (con RLS per multi-tenancy)<br>
+<strong>Scheduling</strong>: Supabase Edge Functions + pg_cron<br>
+<strong>Monitoring</strong>: Sentry per error tracking, custom metrics in DB
+</div>
+
+<h3>Schema Import</h3>
+<div class="code-block">
+<pre style="margin: 0; color: #0f0;">
+-- Staging table per dati raw ANAC
+CREATE TABLE anac_raw (
+  id BIGSERIAL PRIMARY KEY,
+  cig TEXT UNIQUE NOT NULL,
+  xml_data JSONB,
+  imported_at TIMESTAMPTZ DEFAULT NOW(),
+  processed BOOLEAN DEFAULT FALSE
+);
+
+-- Log import per troubleshooting
+CREATE TABLE import_logs (
+  id BIGSERIAL PRIMARY KEY,
+  source TEXT,
+  records_fetched INT,
+  records_inserted INT,
+  errors JSONB,
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ
+);
+</pre>
+</div>
+
+<h3>Python Script Skeleton</h3>
+<div class="code-block">
+<pre style="margin: 0; color: #eee;">
+import requests
+import xml.etree.ElementTree as ET
+from supabase import create_client
+
+def fetch_anac_data(year, month):
+    """Download ANAC XML dataset"""
+    url = f"https://dati.anticorruzione.it/opendata/{year}/{month}/cig.xml"
+    response = requests.get(url, timeout=300)
+    return ET.fromstring(response.content)
+
+def parse_cig(xml_element):
+    """Extract relevant fields from CIG XML"""
+    return {
+        'cig': xml_element.find('cig').text,
+        'cpv': xml_element.find('cpv').text,
+        'importo': float(xml_element.find('importo').text),
+        'stazione_appaltante': xml_element.find('cf_sa').text,
+        'data_aggiudicazione': xml_element.find('data').text
+    }
+
+def import_to_supabase(data):
+    """Insert into price_points table"""
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    supabase.table('anac_raw').insert(data).execute()
+</pre>
+</div>
+
+<h2>Risorse Utili</h2>
+
+<table>
+<tr>
+<th>Risorsa</th>
+<th>Link</th>
+<th>Note</th>
+</tr>
+<tr>
+<td>ANAC OpenData</td>
+<td><a href="https://dati.anticorruzione.it" style="color: #0f0;">dati.anticorruzione.it</a></td>
+<td>Dataset principale, update mensile</td>
+</tr>
+<tr>
+<td>Documentazione XML CIG</td>
+<td><a href="https://www.anticorruzione.it/-/opendata" style="color: #0f0;">Schema XSD</a></td>
+<td>Struttura campi dataset</td>
+</tr>
+<tr>
+<td>CPV Codes EU</td>
+<td><a href="https://simap.ted.europa.eu/cpv" style="color: #0f0;">SIMAP</a></td>
+<td>Classificazione vocabolario comune</td>
+</tr>
+<tr>
+<td>Supabase Cron</td>
+<td><a href="https://supabase.com/docs/guides/database/extensions/pg_cron" style="color: #0f0;">pg_cron docs</a></td>
+<td>Scheduling import automatici</td>
+</tr>
+</table>
+
+<h2>Challenges & Mitigations</h2>
+
+<div class="warning">
+<strong>Challenge 1: Qualità dati ANAC</strong><br>
+~15% CIG con CPV errato o importo = 0<br>
+<strong>→ Mitigation</strong>: validation rules pre-insert, flag record dubbi per review manuale
+</div>
+
+<div class="warning">
+<strong>Challenge 2: Latenza pubblicazione</strong><br>
+Dati pubblicati 30-90gg dopo aggiudicazione<br>
+<strong>→ Mitigation</strong>: disclaimer su UI "dati aggiornati a [data]", focus su trend storici non real-time
+</div>
+
+<div class="warning">
+<strong>Challenge 3: Rate limiting ANAC</strong><br>
+Download bulk può essere bloccato<br>
+<strong>→ Mitigation</strong>: download notturno, retry con exponential backoff, cache locale dataset
+</div>
+
+<h2>Prossimi Step per Ambra</h2>
+
+<div class="success">
+<strong>✓ Step 1: Setup ambiente</strong>
+<ul style="margin: 10px 0;">
+<li>Creare Supabase project per BenchmarkPA</li>
+<li>Eseguire schema SQL (categories, price_points, anac_raw)</li>
+<li>Configurare Python env: <code>pip install supabase pandas requests lxml</code></li>
+</ul>
+</div>
+
+<div class="success">
+<strong>✓ Step 2: Primo import manuale</strong>
+<ul style="margin: 10px 0;">
+<li>Download dataset ANAC ultimo mese disponibile</li>
+<li>Eseguire script import su subset (1000 record test)</li>
+<li>Verificare quality: <code>SELECT COUNT(*), AVG(prezzo_totale) FROM price_points</code></li>
+</ul>
+</div>
+
+<div class="success">
+<strong>✓ Step 3: Validazione benchmark</strong>
+<ul style="margin: 10px 0;">
+<li>Query benchmark per categoria: percentili P25/P50/P75</li>
+<li>Confronto con prezzi mercato noti (sanity check)</li>
+<li>Identificare outlier da escludere</li>
+</ul>
+</div>
+
+<div class="success">
+<strong>✓ Step 4: Automazione</strong>
+<ul style="margin: 10px 0;">
+<li>Deploy script import come Supabase Edge Function</li>
+<li>Setup pg_cron per run settimanale</li>
+<li>Configurare alerting su Sentry per errori import</li>
+</ul>
+</div>
+
+<h2>Success Metrics MVP</h2>
+
+<table>
+<tr>
+<th>Metrica</th>
+<th>Target MVP</th>
+<th>Rationale</th>
+</tr>
+<tr>
+<td>Price points totali</td>
+<td>10,000+</td>
+<td>Significatività statistica per benchmark</td>
+</tr>
+<tr>
+<td>Categorie coperte</td>
+<td>3 (pulizia, manutenzione, vigilanza)</td>
+<td>Proof of concept su use case comuni</td>
+</tr>
+<tr>
+<td>Data freshness</td>
+<td>< 60 giorni</td>
+<td>Accettabile per trend analysis</td>
+</tr>
+<tr>
+<td>Data quality</td>
+<td>> 90% record validi</td>
+<td>Post-cleaning, no outlier estremi</td>
+</tr>
+<tr>
+<td>Import success rate</td>
+<td>> 95%</td>
+<td>Reliability pipeline automatico</td>
+</tr>
+</table>
+
+<h2>Conclusioni</h2>
+
+<p>Il data sourcing è il <strong>collo di bottiglia critico</strong> per BenchmarkPA. L'approccio pragmatico è:</p>
+
+<ol>
+<li><strong>Start simple</strong>: ANAC OpenData bulk download (evita complessità API)</li>
+<li><strong>Focus quality over quantity</strong>: 10K record puliti > 100K sporchi</li>
+<li><strong>Iterate fast</strong>: MVP con 3 categorie, espandi post-validazione</li>
+<li><strong>Build for scale</strong>: pipeline modulare, facile aggiungere nuove fonti</li>
+</ol>
+
+<p>Timeline realistica: <strong>2-3 settimane</strong> da zero a primo benchmark funzionante con dati reali.</p>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>

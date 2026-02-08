@@ -1,5 +1,5 @@
 {
-  "iterations": 17,
+  "iterations": 18,
   "last_project": "BenchmarkPA",
   "findings": [
     {
@@ -57,6 +57,13 @@
       "problem": "clinical validation",
       "page": "rnd-20260206-0601-cdss-clinical-validation.html",
       "ts": "2026-02-06T06:01:02.136172"
+    },
+    {
+      "iteration": 18,
+      "project": "BenchmarkPA",
+      "problem": "data sourcing prezzi PA",
+      "page": "rnd-20260208-0601-benchmarkpa-data-sourcing-prezzi-PA.html",
+      "ts": "2026-02-08T06:01:09.653001"
     }
   ],
   "last_search": "data sourcing prezzi PA solution implementation guide 2024 2025"
