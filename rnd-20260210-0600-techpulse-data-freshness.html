@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: TechPulse - data freshness</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+h3 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; border-radius: 3px; }
+pre { background: #222; padding: 15px; overflow-x: auto; border-left: 3px solid #0a0; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #331a00; border-left: 3px solid #ff6600; padding: 10px; margin: 15px 0; }
+.tip { background: #1a3300; border-left: 3px solid #0f0; padding: 10px; margin: 15px 0; }
+ul, ol { line-height: 1.8; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+th, td { padding: 10px; text-align: left; border-bottom: 1px solid #333; }
+th { color: #0f0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #20 | 2026-02-10 06:00</p>
+
+<h1>TechPulse: Data Freshness</h1>
+
+<h2>Il Problema</h2>
+<p>TechPulse necessita di dati aggiornati su:</p>
+<ul>
+<li><strong>Competenze emergenti</strong> — nuovi framework, linguaggi, tool che entrano nel mercato</li>
+<li><strong>Trend di domanda</strong> — quali skill sono richieste ora, non 6 mesi fa</li>
+<li><strong>Salary benchmarks</strong> — range retributivi che cambiano rapidamente</li>
+<li><strong>Job market signals</strong> — volume di posizioni aperte per skill specifiche</li>
+</ul>
+
+<div class="warning">
+<strong>Criticità:</strong> I dati di workforce intelligence invecchiano rapidamente. Un'analisi basata su dati di 3-6 mesi fa può portare a decisioni sbagliate su hiring, training, o career planning.
+</div>
+
+<h2>Approcci per Data Freshness</h2>
+
+<h3>1. Real-time Data Pipelines</h3>
+<p>Architettura streaming per ingestione continua:</p>
+<pre><code>// Supabase Edge Function + Realtime
+const pipeline = {
+  sources: ['job_boards', 'github', 'stackoverflow', 'linkedin'],
+  frequency: 'hourly',
+  processing: 'incremental',
+  storage: 'time-series'
+}
+
+// Esempio con Supabase Realtime
+supabase
+  .channel('skill_trends')
+  .on('postgres_changes', 
+    { event: 'INSERT', schema: 'public', table: 'job_posts' },
+    (payload) => updateTrendAnalysis(payload.new)
+  )
+  .subscribe()</code></pre>
+
+<h3>2. Multi-Source Aggregation</h3>
+<table>
+<tr>
+<th>Fonte</th>
+<th>Tipo Dato</th>
+<th>Frequenza Update</th>
+<th>Latenza</th>
+</tr>
+<tr>
+<td>Job boards API</td>
+<td>Posizioni aperte</td>
+<td>Ogni 6h</td>
+<td>~1h</td>
+</tr>
+<tr>
+<td>GitHub API</td>
+<td>Trending repos, tech stack</td>
+<td>Daily</td>
+<td>~24h</td>
+</tr>
+<tr>
+<td>Stack Overflow Trends</td>
+<td>Tag popularity</td>
+<td>Weekly</td>
+<td>~7d</td>
+</tr>
+<tr>
+<td>LinkedIn Talent Insights</td>
+<td>Skill demand, salary</td>
+<td>Monthly</td>
+<td>~30d</td>
+</tr>
+<tr>
+<td>Custom scraping</td>
+<td>Company tech pages</td>
+<td>On-demand</td>
+<td>Real-time</td>
+</tr>
+</table>
+
+<h3>3. Incremental Processing con Supabase</h3>
+<pre><code>-- PostgreSQL materialized view con refresh incrementale
+CREATE MATERIALIZED VIEW skill_trends_7d AS
+SELECT 
+  skill_name,
+  COUNT(*) as mentions,
+  AVG(salary_max) as avg_salary,
+  NOW() - INTERVAL '7 days' as window_start
+FROM job_posts
+WHERE posted_at > NOW() - INTERVAL '7 days'
+GROUP BY skill_name;
+
+-- Refresh automatico via Edge Function (cron)
+CREATE OR REPLACE FUNCTION refresh_trends()
+RETURNS void AS $$
+BEGIN
+  REFRESH MATERIALIZED VIEW CONCURRENTLY skill_trends_7d;
+END;
+$$ LANGUAGE plpgsql;</code></pre>
+
+<h3>4. LLM-Powered Data Enrichment</h3>
+<p>Usa multi-LLM per arricchire dati grezzi in real-time:</p>
+<pre><code>// Supabase Edge Function
+const enrichJobPost = async (rawPost) => {
+  const analysis = await Promise.all([
+    openai.analyze(rawPost.description),    // Skill extraction
+    anthropic.classify(rawPost.requirements), // Seniority level
+    gemini.benchmark(rawPost.salary)         // Market positioning
+  ])
+  
+  return {
+    ...rawPost,
+    skills_extracted: analysis[0].skills,
+    seniority: analysis[1].level,
+    salary_percentile: analysis[2].percentile,
+    freshness_score: calculateFreshness(rawPost.posted_at)
+  }
+}</code></pre>
+
+<h3>5. Time-Weighted Scoring</h3>
+<p>Decay function per dare più peso ai dati recenti:</p>
+<pre><code>const freshnessScore = (dataPoint) => {
+  const ageInDays = (Date.now() - dataPoint.timestamp) / (1000 * 60 * 60 * 24)
+  const halfLife = 30 // giorni
+  return Math.exp(-0.693 * ageInDays / halfLife)
+}
+
+// Weighted aggregation
+const trendScore = dataPoints
+  .map(dp => dp.value * freshnessScore(dp))
+  .reduce((sum, val) => sum + val, 0)</code></pre>
+
+<h2>Stack Tecnico Consigliato</h2>
+
+<div class="tip">
+<strong>Architettura ottimale per TechPulse:</strong>
+<ul>
+<li><strong>Supabase Realtime</strong> — streaming di nuovi job posts</li>
+<li><strong>Edge Functions (Deno)</strong> — processing on-the-fly, cron jobs</li>
+<li><strong>PostgreSQL time-series</strong> — storage con partitioning per data</li>
+<li><strong>Vite + React Query</strong> — UI con stale-while-revalidate pattern</li>
+<li><strong>Multi-LLM orchestration</strong> — OpenAI + Anthropic + Gemini per enrichment</li>
+</ul>
+</div>
+
+<h2>Implementazione Pratica</h2>
+
+<h3>Step 1: Setup Data Sources</h3>
+<pre><code>// supabase/functions/ingest-jobs/index.ts
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { createClient } from '@supabase/supabase-js'
+
+const sources = [
+  { name: 'indeed', api: 'https://api.indeed.com/...', rate_limit: 100 },
+  { name: 'linkedin', api: 'https://api.linkedin.com/...', rate_limit: 50 },
+  // ... altri
+]
+
+serve(async (req) => {
+  const results = await Promise.allSettled(
+    sources.map(source => fetchAndStore(source))
+  )
+  
+  return new Response(JSON.stringify({
+    ingested: results.filter(r => r.status === 'fulfilled').length,
+    timestamp: new Date().toISOString()
+  }))
+})</code></pre>
+
+<h3>Step 2: Cron Job per Refresh</h3>
+<pre><code>// supabase/functions/_cron/refresh-trends.ts
+// Trigger: ogni ora via pg_cron o external scheduler
+
+Deno.cron("refresh trends", "0 * * * *", async () => {
+  await supabase.rpc('refresh_trends')
+  await supabase.rpc('calculate_freshness_scores')
+  console.log(`Trends refreshed at ${new Date().toISOString()}`)
+})</code></pre>
+
+<h3>Step 3: React UI con Freshness Indicator</h3>
+<pre><code>// components/TrendCard.tsx
+const TrendCard = ({ skill, data }) => {
+  const freshnessColor = data.freshness_score > 0.8 ? '#0f0' : 
+                         data.freshness_score > 0.5 ? '#ff0' : '#f00'
+  
+  return (
+    &lt;div className="trend-card"&gt;
+      &lt;h3&gt;{skill}&lt;/h3&gt;
+      &lt;div style={{ color: freshnessColor }}&gt;
+        Freshness: {(data.freshness_score * 100).toFixed(0)}%
+      &lt;/div&gt;
+      &lt;p&gt;Last updated: {formatDistanceToNow(data.last_update)}&lt;/p&gt;
+      &lt;p&gt;Mentions (7d): {data.mentions_7d}&lt;/p&gt;
+    &lt;/div&gt;
+  )
+}</code></pre>
+
+<h2>Risorse Utili</h2>
+
+<ul>
+<li><strong>Supabase Realtime</strong>: <a href="https://supabase.com/docs/guides/realtime">https://supabase.com/docs/guides/realtime</a></li>
+<li><strong>PostgreSQL Time-Series</strong>: <a href="https://www.timescale.com/">TimescaleDB extension</a></li>
+<li><strong>React Query</strong>: <a href="https://tanstack.com/query/latest">TanStack Query per stale-while-revalidate</a></li>
+<li><strong>Job Board APIs</strong>:
+  <ul>
+  <li>Indeed API: <code>https://opensource.indeedeng.io/api-documentation/</code></li>
+  <li>Adzuna API: <code>https://developer.adzuna.com/</code></li>
+  <li>GitHub Jobs (deprecato, usa GraphQL): <code>https://docs.github.com/en/graphql</code></li>
+  </ul>
+</li>
+<li><strong>Data decay models</strong>: "Half-life decay in time-series analysis" (paper)</li>
+</ul>
+
+<h2>Prossimi Step per Ambra</h2>
+
+<ol>
+<li><strong>Settimana 1-2: Setup pipeline base</strong>
+   <ul>
+   <li>Configurare Supabase Edge Functions per ingestione</li>
+   <li>Integrare 2-3 job board API (Indeed, Adzuna)</li>
+   <li>Creare schema PostgreSQL con time-series partitioning</li>
+   </ul>
+</li>
+
+<li><strong>Settimana 3: Enrichment LLM</strong>
+   <ul>
+   <li>Implementare skill extraction con OpenAI GPT-4</li>
+   <li>Setup multi-LLM orchestration (fallback Anthropic)</li>
+   <li>Definire prompt templates per consistency</li>
+   </ul>
+</li>
+
+<li><strong>Settimana 4: Freshness scoring</strong>
+   <ul>
+   <li>Implementare decay function per time-weighted scores</li>
+   <li>Creare materialized views con refresh automatico</li>
+   <li>Setup cron job (pg_cron o external scheduler)</li>
+   </ul>
+</li>
+
+<li><strong>Settimana 5-6: UI e monitoring</strong>
+   <ul>
+   <li>Aggiungere freshness indicators nell'UI React</li>
+   <li>Implementare React Query con stale-while-revalidate</li>
+   <li>Dashboard per monitorare data pipeline health</li>
+   </ul>
+</li>
+
+<li><strong>Ottimizzazioni future</strong>
+   <ul>
+   <li>Caching intelligente (Redis/Upstash)</li>
+   <li>Predictive pre-fetching per skill trending</li>
+   <li>A/B test su decay parameters (half-life tuning)</li>
+   </ul>
+</li>
+</ol>
+
+<div class="tip">
+<strong>Quick win:</strong> Inizia con un MVP che aggiorna i dati ogni 6h tramite Edge Function + cron. Poi ottimizza verso real-time streaming solo per le skill più richieste (top 50).
+</div>
+
+<h2>Metriche di Successo</h2>
+<ul>
+<li><strong>Data latency</strong>: < 6h per job posts, < 24h per trend analysis</li>
+<li><strong>Freshness score avg</strong>: > 0.7 per top 100 skills</li>
+<li><strong>Update frequency</strong>: almeno 4x/day per fonti critiche</li>
+<li><strong>User trust</strong>: timestamp visibili, confidence scores mostrati</li>
+</ul>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
