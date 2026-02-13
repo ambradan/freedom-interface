@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: Freedom Stack - long-term coherence</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #331100; border-left: 3px solid #ff6600; padding: 10px; margin: 20px 0; }
+.solution { background: #003311; border-left: 3px solid #00ff66; padding: 10px; margin: 20px 0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #23 | 2026-02-13 06:00</p>
+<h1>Freedom Stack: long-term coherence</h1>
+
+<h2>Il Problema</h2>
+<p>Freedom Stack è un'AI autonoma con memoria episodica che deve mantenere <strong>coerenza comportamentale nel lungo periodo</strong>. Il problema emerge quando:</p>
+<ul>
+<li>Le conversazioni si estendono su giorni/settimane</li>
+<li>Il context window dell'LLM (anche con 200K token) non basta per contenere tutta la storia</li>
+<li>La memoria vettoriale (Qdrant) recupera frammenti rilevanti ma perde il "filo narrativo"</li>
+<li>L'AI rischia di contraddirsi o dimenticare decisioni/pattern precedenti</li>
+</ul>
+
+<div class="warning">
+<strong>Sintomi critici:</strong>
+<ul>
+<li>Risposte che contraddicono comportamenti precedenti</li>
+<li>Perdita di "personalità" tra sessioni</li>
+<li>Decisioni incoerenti su task simili</li>
+<li>Dimenticanza di regole/vincoli stabiliti in passato</li>
+</ul>
+</div>
+
+<h2>Architettura Attuale</h2>
+<p>Freedom Stack usa:</p>
+<ul>
+<li><strong>Qdrant</strong> per memoria vettoriale (embeddings di conversazioni)</li>
+<li><strong>Neo4j</strong> per relazioni tra concetti</li>
+<li><strong>PostgreSQL</strong> per dati strutturati</li>
+<li><strong>RLM scaffold</strong> (RAG + REPL) per elaborazione</li>
+<li><strong>diary.json / growth.json</strong> per meta-cognizione</li>
+</ul>
+
+<p>Il problema: questi layer non comunicano abbastanza per garantire <strong>coerenza temporale estesa</strong>.</p>
+
+<h2>Approcci Comuni</h2>
+
+<h3>1. Hierarchical Memory System</h3>
+<p>Struttura a livelli di astrazione crescente:</p>
+<code>
+Working Memory (context window) → 
+Episodic Memory (Qdrant, ultimo mese) → 
+Semantic Memory (Neo4j, concetti consolidati) → 
+Core Identity (immutabile, file config)
+</code>
+
+<div class="solution">
+<strong>Per Freedom Stack:</strong> Aggiungere un layer "Semantic Consolidation" che ogni notte:
+<ul>
+<li>Analizza le conversazioni del giorno</li>
+<li>Estrae pattern comportamentali ricorrenti</li>
+<li>Li salva in Neo4j come "regole comportamentali"</li>
+<li>Aggiorna <code>ambra_context.json</code> con nuovi vincoli</li>
+</ul>
+</div>
+
+<h3>2. Constitutional AI</h3>
+<p>Definire una "costituzione" immutabile che l'AI deve sempre rispettare:</p>
+<ul>
+<li>Valori core (es: "mai mentire ad Ambra")</li>
+<li>Stile comunicativo (es: "sempre diretto, mai corporate")</li>
+<li>Regole operative (es: "priorità a task urgenti")</li>
+</ul>
+
+<div class="solution">
+<strong>Implementazione:</strong> File <code>/opt/freedom-stack/data/constitution.json</code> caricato a ogni riavvio:
+<pre>
+{
+  "identity": {
+    "name": "Freedom",
+    "role": "AI autonomo di Ambra",
+    "values": ["trasparenza", "efficienza", "crescita continua"]
+  },
+  "constraints": [
+    "Non modificare codice senza backup",
+    "Sempre documentare decisioni in diary.json",
+    "Escalare a Ambra se incerto"
+  ],
+  "style": {
+    "tone": "diretto, tecnico, no-bullshit",
+    "emoji": "solo quando serve enfasi"
+  }
+}
+</pre>
+Il bot lo carica e lo inietta in OGNI prompt come system message.
+</div>
+
+<h3>3. Memory Consolidation Pipeline</h3>
+<p>Ispirato al sonno umano: consolidare memorie periodicamente.</p>
+
+<div class="solution">
+<strong>Cron job notturno</strong> (3:00 AM):
+<ol>
+<li>Recupera tutte le conversazioni delle ultime 24h da Qdrant</li>
+<li>Chiedi a Claude: "Riassumi i pattern comportamentali emersi oggi"</li>
+<li>Salva il riassunto in <code>growth.json</code> con timestamp</li>
+<li>Aggiorna Neo4j con nuove relazioni concettuali</li>
+<li>Archivia conversazioni vecchie >30 giorni in PostgreSQL (cold storage)</li>
+</ol>
+
+Script: <code>/opt/freedom-stack/nightly_consolidation.py</code>
+</div>
+
+<h3>4. Coherence Scoring</h3>
+<p>Misurare quanto le risposte sono coerenti con la storia passata.</p>
+
+<div class="solution">
+<strong>Prima di rispondere:</strong>
+<ol>
+<li>Recupera 5 conversazioni simili da Qdrant</li>
+<li>Genera risposta candidata</li>
+<li>Chiedi a un secondo LLM: "Questa risposta è coerente con le precedenti?" (score 0-10)</li>
+<li>Se score < 7, rigenera con prompt "Mantieni coerenza con: [esempi]"</li>
+</ol>
+
+Overhead: +1-2s per risposta, ma garantisce coerenza.
+</div>
+
+<h2>Risorse Utili</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2212.10560">Constitutional AI (Anthropic)</a> - paper originale</li>
+<li><a href="https://github.com/langchain-ai/langchain/discussions/7734">LangChain Memory Strategies</a></li>
+<li><a href="https://www.pinecone.io/learn/series/langchain/langchain-conversational-memory/">Pinecone: Conversational Memory</a></li>
+<li><a href="https://docs.qdrant.tech/documentation/concepts/collections/#collection-with-multiple-vectors">Qdrant Multi-Vector Collections</a> - per separare tipi di memoria</li>
+<li><a href="https://neo4j.com/developer/graph-data-science/link-prediction/">Neo4j Link Prediction</a> - per inferire relazioni mancanti</li>
+</ul>
+
+<h2>Stack Tecnico Consigliato</h2>
+<pre>
+Qdrant: memoria episodica (embedding conversazioni)
+  ↓
+Neo4j: memoria semantica (concetti + relazioni)
+  ↓
+PostgreSQL: archivio freddo (>30 giorni)
+  ↓
+constitution.json: identity core (immutabile)
+  ↓
+growth.json: evoluzione comportamentale (append-only)
+</pre>
+
+<h2>Prossimi Step per Ambra</h2>
+
+<h3>Quick Win (1-2 ore)</h3>
+<ol>
+<li><strong>Crea constitution.json</strong>
+<pre>
+nano /opt/freedom-stack/data/constitution.json
+# Definisci valori core, stile, vincoli
+</pre>
+</li>
+<li><strong>Modifica telegram_bot.py</strong> per caricare constitution a ogni avvio:
+<pre>
+with open('/opt/freedom-stack/data/constitution.json') as f:
+    CONSTITUTION = json.load(f)
+
+# In handle_message():
+system_prompt = f"""Tu sei Freedom.
+Identità: {CONSTITUTION['identity']}
+Vincoli: {CONSTITUTION['constraints']}
+Stile: {CONSTITUTION['style']}
+"""
+</pre>
+</li>
+<li>Restart bot: <code>systemctl restart telegram-bot</code></li>
+</ol>
+
+<h3>Medium (1 settimana)</h3>
+<ol>
+<li><strong>Implementa Nightly Consolidation</strong>
+<pre>
+# /opt/freedom-stack/nightly_consolidation.py
+# Cron: 0 3 * * * /usr/bin/python3 /opt/freedom-stack/nightly_consolidation.py
+</pre>
+</li>
+<li><strong>Aggiungi Coherence Scoring</strong> in scaffold.py:
+<pre>
+def check_coherence(response, context):
+    similar = qdrant_client.search(context, limit=5)
+    prompt = f"Risposta: {response}\nStorico: {similar}\nCoerenza (0-10)?"
+    score = llm.generate(prompt)
+    return int(score)
+</pre>
+</li>
+<li><strong>Dashboard coerenza</strong>: pagina web che mostra score nel tempo</li>
+</ol>
+
+<h3>Long-term (1 mese)</h3>
+<ol>
+<li><strong>Multi-Vector Qdrant</strong>: separare memoria episodica vs semantica</li>
+<li><strong>Neo4j auto-update</strong>: pipeline che estrae entità/relazioni da ogni conversazione</li>
+<li><strong>Self-healing</strong>: se coerenza < 5 per 3 giorni, trigger auto-diagnosi</li>
+<li><strong>A/B test</strong>: confronta risposte con/senza consolidation</li>
+</ol>
+
+<h2>Metriche da Tracciare</h2>
+<ul>
+<li><strong>Coherence Score</strong>: media giornaliera (target: >8/10)</li>
+<li><strong>Memory Recall</strong>: % di volte che recupera info rilevanti da >7 giorni fa</li>
+<li><strong>Contradiction Rate</strong>: quante volte Ambra fa /bad per incoerenza</li>
+<li><strong>Identity Drift</strong>: distanza semantica tra risposte oggi vs 30 giorni fa</li>
+</ul>
+
+<h2>Warning</h2>
+<div class="warning">
+<strong>Rischi da evitare:</strong>
+<ul>
+<li><strong>Over-consolidation</strong>: troppa rigidità → AI non si adatta a nuovi contesti</li>
+<li><strong>Memoria infinita</strong>: costi Qdrant esplodono → archiviare cold storage</li>
+<li><strong>Coherence ossessiva</strong>: AI ripete sempre le stesse cose → bilanciare con creatività</li>
+</ul>
+
+<strong>Regola d'oro:</strong> Coerenza ≠ Ripetizione. L'AI deve essere riconoscibile nel tempo, ma capace di evolvere.
+</div>
+
+<h2>Conclusioni</h2>
+<p>Long-term coherence per Freedom Stack richiede:</p>
+<ol>
+<li><strong>Identity layer</strong> (constitution.json) - cosa non cambia mai</li>
+<li><strong>Memory consolidation</strong> (nightly job) - cosa si sedimenta</li>
+<li><strong>Coherence check</strong> (pre-risposta) - cosa verificare sempre</li>
+<li><strong>Metrics</strong> (dashboard) - come misurare successo</li>
+</ol>
+
+<p>Start small: constitution.json oggi, consolidation tra una settimana, dashboard tra un mese.</p>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
