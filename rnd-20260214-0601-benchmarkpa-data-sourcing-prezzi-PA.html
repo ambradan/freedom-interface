@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: BenchmarkPA - data sourcing prezzi PA</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+h3 { color: #0d0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; border-radius: 3px; }
+pre { background: #1a1a1a; padding: 15px; overflow-x: auto; border-left: 3px solid #0f0; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #332200; padding: 12px; border-left: 4px solid #ff9900; margin: 15px 0; }
+.success { background: #003322; padding: 12px; border-left: 4px solid #00ff99; margin: 15px 0; }
+.info { background: #001a33; padding: 12px; border-left: 4px solid #0099ff; margin: 15px 0; }
+table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+th, td { border: 1px solid #333; padding: 10px; text-align: left; }
+th { background: #1a1a1a; color: #0f0; }
+ul, ol { margin-left: 20px; line-height: 1.8; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #24 | 2026-02-14 06:00</p>
+<h1>BenchmarkPA: data sourcing prezzi PA</h1>
+
+<h2>Il Problema</h2>
+<p>BenchmarkPA necessita di dati reali e aggiornati sui prezzi delle gare pubbliche italiane per fornire benchmark accurati alle PA. Il problema principale è l'acquisizione sistematica di questi dati da fonti pubbliche affidabili.</p>
+
+<div class="warning">
+<strong>⚠️ Stato Attuale:</strong> L'API ANAC (<code>dati.anticorruzione.it/opendata/dataset/cig.json</code>) restituisce HTML invece di JSON. Attualmente il sistema usa dati sample (150 price points su 3 categorie: PULIZIA, MANUTENZIONE_IMMOBILI, VIGILANZA).
+</div>
+
+<h2>Fonti Dati Disponibili</h2>
+
+<h3>1. ANAC (Autorità Nazionale Anticorruzione)</h3>
+<table>
+<tr>
+<th>Risorsa</th>
+<th>URL</th>
+<th>Formato</th>
+<th>Status</th>
+</tr>
+<tr>
+<td>Open Data ANAC</td>
+<td><code>dati.anticorruzione.it</code></td>
+<td>CKAN API</td>
+<td>🟡 Da investigare</td>
+</tr>
+<tr>
+<td>Banca Dati Contratti Pubblici</td>
+<td><code>bdncp.anticorruzione.it</code></td>
+<td>Web/API</td>
+<td>🟢 Disponibile</td>
+</tr>
+<tr>
+<td>Dataset CIG</td>
+<td><code>/opendata/dataset/cig</code></td>
+<td>CSV/JSON</td>
+<td>🔴 Endpoint errato</td>
+</tr>
+</table>
+
+<h3>2. MePA (Mercato Elettronico PA)</h3>
+<ul>
+<li><strong>URL:</strong> <code>acquistinretepa.it</code></li>
+<li><strong>Dati:</strong> Prezzi catalogo, contratti quadro, accordi quadro</li>
+<li><strong>Accesso:</strong> Richiede autenticazione per dati dettagliati</li>
+<li><strong>Copertura:</strong> Solo gare soprasoglia e MePA</li>
+</ul>
+
+<h3>3. Portali Regionali/Comunali</h3>
+<ul>
+<li>Ogni ente ha il proprio portale (es. <code>comune.milano.it/gare</code>)</li>
+<li>Formati eterogenei (PDF, HTML, CSV)</li>
+<li>Nessun standard comune</li>
+<li>Difficile da scalare</li>
+</ul>
+
+<h2>Approcci Implementabili</h2>
+
+<h3>Approccio A: API ANAC (Raccomandato)</h3>
+<div class="success">
+<strong>✓ Pro:</strong> Dati ufficiali, copertura nazionale, aggiornamento continuo
+</div>
+
+<pre><code># Endpoint corretto CKAN API
+GET https://dati.anticorruzione.it/api/3/action/package_search?q=contratti
+
+# Oppure accesso diretto ai dataset
+GET https://dati.anticorruzione.it/api/3/action/datastore_search?resource_id={ID}
+
+# Parametri chiave:
+- CIG (Codice Identificativo Gara)
+- importo_aggiudicazione
+- oggetto_principale_contratto
+- data_pubblicazione
+- codice_fiscale_stazione_appaltante
+</code></pre>
+
+<p><strong>Step implementazione:</strong></p>
+<ol>
+<li>Identificare il <code>resource_id</code> corretto dal catalogo CKAN</li>
+<li>Testare query API con filtri per categoria merceologica</li>
+<li>Creare job schedulato (cron) per import incrementale</li>
+<li>Normalizzare dati e inserire in <code>price_points</code></li>
+</ol>
+
+<h3>Approccio B: Web Scraping BDNCP</h3>
+<div class="info">
+<strong>ℹ️ Fallback:</strong> Se API non disponibile, scraping del portale BDNCP
+</div>
+
+<pre><code># Python con BeautifulSoup/Scrapy
+import requests
+from bs4 import BeautifulSoup
+
+url = "https://bdncp.anticorruzione.it/search"
+params = {
+    'categoria': 'PULIZIA',
+    'importo_min': 0,
+    'importo_max': 40000  # sottosoglia
+}
+
+response = requests.get(url, params=params)
+soup = BeautifulSoup(response.content, 'html.parser')
+
+# Parsing tabelle risultati...
+</code></pre>
+
+<p><strong>Limitazioni:</strong></p>
+<ul>
+<li>Fragile ai cambi di layout</li>
+<li>Rate limiting</li>
+<li>Possibili problemi legali (verificare ToS)</li>
+</ul>
+
+<h3>Approccio C: Crowdsourcing + Validazione</h3>
+<ul>
+<li>Permettere alle PA di caricare i propri dati</li>
+<li>Sistema di validazione automatica (check range, coerenza)</li>
+<li>Reputazione utenti (PA verificate)</li>
+<li>Incentivi per contribuzione (es. accesso premium gratuito)</li>
+</ul>
+
+<h2>Architettura Proposta</h2>
+
+<pre><code>┌─────────────────┐
+│   ANAC API      │ ←── Primary source
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  ETL Pipeline   │ ←── Supabase Edge Function
+│  (scheduled)    │     Cron: daily @ 02:00
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Validation     │ ←── Check ranges, outliers
+│  Layer          │     ML anomaly detection
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  price_points   │ ←── PostgreSQL
+│  table          │     + materialized views
+└─────────────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Benchmark API  │ ←── get_benchmark_stats()
+└─────────────────┘
+</code></pre>
+
+<h2>Schema DB Esistente</h2>
+<pre><code>CREATE TABLE price_points (
+  id UUID PRIMARY KEY,
+  category_id UUID REFERENCES categories(id),
+  cig TEXT,
+  prezzo_totale DECIMAL(12,2),
+  regione TEXT,
+  anno INTEGER,
+  metadata JSONB,
+  created_at TIMESTAMPTZ
+);
+
+-- Index per performance
+CREATE INDEX idx_price_points_category ON price_points(category_id);
+CREATE INDEX idx_price_points_anno ON price_points(anno);
+CREATE INDEX idx_price_points_regione ON price_points(regione);
+</code></pre>
+
+<h2>Risorse Utili</h2>
+
+<h3>Documentazione</h3>
+<ul>
+<li><a href="https://docs.ckan.org/en/latest/api/">CKAN API Documentation</a></li>
+<li><a href="https://www.anticorruzione.it/opendata">ANAC Open Data</a></li>
+<li><a href="https://www.acquistinretepa.it/opencms/opencms/">MePA - Consip</a></li>
+</ul>
+
+<h3>Tool & Librerie</h3>
+<ul>
+<li><strong>ckanapi</strong> - Python client per CKAN</li>
+<li><strong>pandas</strong> - Data manipulation</li>
+<li><strong>pydantic</strong> - Validation schema</li>
+<li><strong>asyncpg</strong> - PostgreSQL async driver</li>
+</ul>
+
+<h3>Riferimenti Normativi</h3>
+<ul>
+<li>D.Lgs 50/2016 (Codice Appalti) - Art. 213 (Banca Dati Nazionale)</li>
+<li>D.L. 76/2020 (Semplificazioni) - Soglie e procedure</li>
+<li>Determina ANAC n. 1300/2020 - Pubblicazione dati</li>
+</ul>
+
+<h2>Prossimi Step per Ambra</h2>
+
+<div class="success">
+<h3>🎯 Priorità Alta (Questa Settimana)</h3>
+<ol>
+<li><strong>Investigare endpoint ANAC corretto</strong>
+   <ul>
+   <li>Navigare <code>dati.anticorruzione.it</code> e identificare dataset CIG</li>
+   <li>Testare API CKAN con Postman/curl</li>
+   <li>Documentare <code>resource_id</code> e schema dati</li>
+   </ul>
+</li>
+
+<li><strong>Verificare dati sample in DB</strong>
+   <pre><code>-- Query da eseguire in Supabase SQL Editor
+SELECT 
+  c.codice as categoria,
+  COUNT(*) as n_price_points,
+  ROUND(AVG(pp.prezzo_totale)::numeric, 2) as avg_prezzo,
+  ROUND(MIN(pp.prezzo_totale)::numeric, 2) as min_prezzo,
+  ROUND(MAX(pp.prezzo_totale)::numeric, 2) as max_prezzo
+FROM price_points pp
+JOIN categories c ON pp.category_id = c.id
+GROUP BY c.codice
+ORDER BY n_price_points DESC;</code></pre>
+</li>
+
+<li><strong>Testare API backend esistente</strong>
+   <ul>
+   <li>Verificare che <code>get_benchmark_stats()</code> funzioni</li>
+   <li>Testare frontend MVP con dati sample</li>
+   <li>Documentare eventuali bug</li>
+   </ul>
+</li>
+</ol>
+</div>
+
+<div class="info">
+<h3>📋 Priorità Media (Prossime 2 Settimane)</h3>
+<ol>
+<li>Implementare ETL pipeline per import ANAC</li>
+<li>Aggiungere validation layer (check outliers)</li>
+<li>Creare dashboard admin per monitoraggio import</li>
+<li>Implementare caching per query frequenti</li>
+</ol>
+</div>
+
+<div class="warning">
+<h3>⚠️ Blockers Noti</h3>
+<ul>
+<li><strong>API ANAC non documentata:</strong> Serve reverse engineering o contatto diretto ANAC</li>
+<li><strong>Qualità dati:</strong> Possibili inconsistenze nei dati pubblici (importi, categorie)</li>
+<li><strong>Rate limiting:</strong> Non noti i limiti API ANAC - implementare backoff</li>
+</ul>
+</div>
+
+<h2>Metriche di Successo</h2>
+<table>
+<tr>
+<th>Metrica</th>
+<th>Target Q1 2026</th>
+<th>Status</th>
+</tr>
+<tr>
+<td>Price points in DB</td>
+<td>&gt; 10,000</td>
+<td>150 (sample)</td>
+</tr>
+<tr>
+<td>Categorie coperte</td>
+<td>&gt; 20</td>
+<td>3</td>
+</tr>
+<tr>
+<td>Regioni coperte</td>
+<td>Tutte (20)</td>
+<td>3 (sample)</td>
+</tr>
+<tr>
+<td>Freshness dati</td>
+<td>&lt; 7 giorni</td>
+<td>N/A</td>
+</tr>
+<tr>
+<td>API uptime</td>
+<td>&gt; 99.5%</td>
+<td>100% (sample)</td>
+</tr>
+</table>
+
+<h2>Conclusioni</h2>
+<p>Il data sourcing è il <strong>collo di bottiglia critico</strong> per BenchmarkPA. Senza dati reali e aggiornati, il prodotto non può generare valore. La priorità assoluta è sbloccare l'accesso all'API ANAC o implementare un piano B (scraping + crowdsourcing).</p>
+
+<p>Il sistema è già pronto tecnicamente (DB schema, API backend, frontend MVP). Serve solo alimentarlo con dati reali.</p>
+
+<p><a href="/">← Back to R&D Index</a></p>
+</body>
+</html>
