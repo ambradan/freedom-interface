@@ -1,5 +1,5 @@
 {
-  "iterations": 24,
+  "iterations": 25,
   "last_project": "BenchmarkPA",
   "findings": [
     {
@@ -92,7 +92,14 @@
       "problem": "data sourcing prezzi PA",
       "page": "rnd-20260214-0601-benchmarkpa-data-sourcing-prezzi-PA.html",
       "ts": "2026-02-14T06:01:02.179827"
+    },
+    {
+      "iteration": 25,
+      "project": "BenchmarkPA",
+      "problem": "go-to-market B2B2G",
+      "page": "rnd-20260215-0601-benchmarkpa-go-to-market-B2B2G.html",
+      "ts": "2026-02-15T06:01:03.265154"
     }
   ],
-  "last_search": "data sourcing prezzi PA solution implementation guide 2024 2025"
+  "last_search": "go-to-market B2B2G solution implementation guide 2024 2025"
 }
