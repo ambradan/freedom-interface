@@ -1,6 +1,6 @@
 {
-  "iterations": 25,
-  "last_project": "BenchmarkPA",
+  "iterations": 26,
+  "last_project": "TenderMatch",
   "findings": [
     {
       "iteration": 4,
@@ -99,7 +99,14 @@
       "problem": "go-to-market B2B2G",
       "page": "rnd-20260215-0601-benchmarkpa-go-to-market-B2B2G.html",
       "ts": "2026-02-15T06:01:03.265154"
+    },
+    {
+      "iteration": 26,
+      "project": "TenderMatch",
+      "problem": "scaling",
+      "page": "rnd-20260216-0601-tendermatch-scaling.html",
+      "ts": "2026-02-16T06:01:09.099882"
     }
   ],
-  "last_search": "go-to-market B2B2G solution implementation guide 2024 2025"
+  "last_search": "scaling solution implementation guide 2024 2025"
 }

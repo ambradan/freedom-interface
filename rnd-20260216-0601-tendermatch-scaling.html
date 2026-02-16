@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: TenderMatch - scaling</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #332200; padding: 15px; border-left: 3px solid #ff9900; margin: 20px 0; }
+.solution { background: #002200; padding: 15px; border-left: 3px solid #00ff00; margin: 20px 0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #26 | 2026-02-16 06:00</p>
+<h1>TenderMatch: scaling</h1>
+
+<h2>Il Problema</h2>
+<p>TenderMatch è un compliance engine per gare pubbliche che deve processare e analizzare bandi in tempo reale. Lo scaling presenta sfide critiche su tre dimensioni:</p>
+
+<div class="warning">
+<strong>Critical Bottlenecks:</strong>
+<ul>
+<li><strong>Volume Processing:</strong> Migliaia di bandi giornalieri da portali PA italiani</li>
+<li><strong>AI Analysis Cost:</strong> LLM calls per analisi compliance → costo lineare con volume</li>
+<li><strong>Real-time Matching:</strong> Matching bandi-aziende con latenza <500ms</li>
+<li><strong>Database Load:</strong> PostgreSQL queries su dataset crescente (bandi storici + profili aziendali)</li>
+</ul>
+</div>
+
+<h2>Stack Analysis</h2>
+<p><strong>Current:</strong> Lovable (frontend) + Express (API) + Railway (hosting) + Supabase (DB) + Make (automation)</p>
+
+<p><strong>Scaling Constraints:</strong></p>
+<ul>
+<li>Railway: shared resources, cold starts, limited horizontal scaling</li>
+<li>Supabase free/pro tier: connection pooling limits, query performance</li>
+<li>Make: execution time limits, step count restrictions</li>
+<li>Express: single-threaded, no built-in job queue</li>
+</ul>
+
+<h2>Approcci di Scaling</h2>
+
+<div class="solution">
+<h3>1. Database Optimization (Quick Win)</h3>
+<pre><code>-- Indici strategici per matching
+CREATE INDEX idx_bandi_cpv ON bandi USING GIN (cpv_codes);
+CREATE INDEX idx_bandi_importo ON bandi (importo_stimato) WHERE stato = 'attivo';
+CREATE INDEX idx_aziende_settori ON aziende USING GIN (settori_merceologici);
+
+-- Partitioning per bandi storici
+CREATE TABLE bandi_2024 PARTITION OF bandi 
+FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+
+-- Materialized views per analytics
+CREATE MATERIALIZED VIEW bandi_stats_daily AS
+SELECT DATE(pubblicazione), COUNT(*), AVG(importo_stimato)
+FROM bandi GROUP BY 1;
+REFRESH MATERIALIZED VIEW CONCURRENTLY bandi_stats_daily;</code></pre>
+</div>
+
+<div class="solution">
+<h3>2. Async Job Queue (Critical)</h3>
+<p>Sostituire Make con BullMQ + Redis per processing asincrono:</p>
+<pre><code>// Job queue architecture
+import { Queue, Worker } from 'bullmq';
+
+const bandiQueue = new Queue('bandi-processing', {
+  connection: { host: 'redis', port: 6379 }
+});
+
+// Producer: scraping bandi
+await bandiQueue.add('analyze-bando', {
+  bandoId: '12345',
+  url: 'https://...'
+}, {
+  priority: bando.importo > 100000 ? 1 : 5,
+  attempts: 3,
+  backoff: { type: 'exponential', delay: 2000 }
+});
+
+// Worker: AI analysis (scalabile orizzontalmente)
+const worker = new Worker('bandi-processing', async job => {
+  const { bandoId, url } = job.data;
+  const text = await scrapeBando(url);
+  const analysis = await analyzeWithLLM(text);
+  await supabase.from('bandi').update(analysis).eq('id', bandoId);
+}, { concurrency: 10 });
+</code></pre>
+</div>
+
+<div class="solution">
+<h3>3. Caching Layer (Performance)</h3>
+<pre><code>// Redis caching per matching results
+import { createClient } from 'redis';
+const redis = createClient();
+
+async function getMatchingBandi(aziendaId) {
+  const cacheKey = `matches:${aziendaId}`;
+  const cached = await redis.get(cacheKey);
+  
+  if (cached) return JSON.parse(cached);
+  
+  const matches = await computeMatches(aziendaId);
+  await redis.setEx(cacheKey, 3600, JSON.stringify(matches)); // 1h TTL
+  return matches;
+}</code></pre>
+</div>
+
+<div class="solution">
+<h3>4. LLM Cost Optimization</h3>
+<ul>
+<li><strong>Batch Processing:</strong> Aggregare analisi simili in batch API calls</li>
+<li><strong>Tiered Analysis:</strong> 
+  <ul>
+    <li>Layer 1: Regex/NLP deterministico per filtro iniziale (gratis)</li>
+    <li>Layer 2: Small model (GPT-3.5) per classificazione (cheap)</li>
+    <li>Layer 3: Large model (GPT-4) solo per bandi high-value (expensive)</li>
+  </ul>
+</li>
+<li><strong>Prompt Caching:</strong> Usare system prompts cacheable (Claude/OpenAI)</li>
+<li><strong>Fine-tuning:</strong> Custom model su bandi PA italiani → 10x cheaper inference</li>
+</ul>
+</div>
+
+<div class="solution">
+<h3>5. Infrastructure Migration</h3>
+<p><strong>Railway → Fly.io/Render:</strong></p>
+<ul>
+<li>Auto-scaling basato su CPU/memory</li>
+<li>Multi-region deployment</li>
+<li>Persistent volumes per Redis</li>
+</ul>
+
+<p><strong>Supabase → Neon/Supabase Pro:</strong></p>
+<ul>
+<li>Connection pooling (PgBouncer)</li>
+<li>Read replicas per analytics</li>
+<li>Point-in-time recovery</li>
+</ul>
+</div>
+
+<h2>Architecture Proposta</h2>
+<pre><code>┌─────────────┐
+│   Lovable   │  Frontend (statico, CDN)
+│   (Vercel)  │
+└──────┬──────┘
+       │
+┌──────▼──────────────────────────────┐
+│     Express API (Fly.io)            │
+│  - Auth, CRUD, WebSocket            │
+│  - Rate limiting                    │
+└──────┬──────────────────────────────┘
+       │
+┌──────▼──────────┐    ┌──────────────┐
+│  Redis (Upstash)│◄───┤  BullMQ Jobs │
+│  - Cache        │    │  - Scraping  │
+│  - Queue        │    │  - AI Analysis│
+└─────────────────┘    └──────────────┘
+       │
+┌──────▼──────────────────────────────┐
+│   PostgreSQL (Neon)                 │
+│  - Partitioned tables               │
+│  - Materialized views               │
+│  - Read replicas                    │
+└─────────────────────────────────────┘
+</code></pre>
+
+<h2>Scaling Roadmap</h2>
+
+<h3>Phase 1: Optimization (Week 1-2)</h3>
+<ul>
+<li>✅ Database indexing + query optimization</li>
+<li>✅ Redis caching layer</li>
+<li>✅ Tiered LLM analysis (cheap first pass)</li>
+<li><strong>Impact:</strong> 3x faster queries, 60% LLM cost reduction</li>
+</ul>
+
+<h3>Phase 2: Async Architecture (Week 3-4)</h3>
+<ul>
+<li>✅ BullMQ job queue setup</li>
+<li>✅ Migrate Make workflows to workers</li>
+<li>✅ Horizontal worker scaling</li>
+<li><strong>Impact:</strong> 10x throughput, no timeout issues</li>
+</ul>
+
+<h3>Phase 3: Infrastructure (Week 5-6)</h3>
+<ul>
+<li>✅ Migrate to Fly.io (auto-scaling)</li>
+<li>✅ Neon PostgreSQL (connection pooling)</li>
+<li>✅ Multi-region deployment</li>
+<li><strong>Impact:</strong> 99.9% uptime, <200ms latency EU</li>
+</ul>
+
+<h3>Phase 4: Advanced (Month 2+)</h3>
+<ul>
+<li>📊 Fine-tuned LLM per bandi PA</li>
+<li>🔍 Elasticsearch per full-text search</li>
+<li>📈 Real-time analytics dashboard</li>
+<li>🤖 Predictive matching (ML model)</li>
+</ul>
+
+<h2>Risorse Tecniche</h2>
+
+<h3>Job Queues</h3>
+<ul>
+<li><a href="https://docs.bullmq.io/" target="_blank">BullMQ Documentation</a> - Redis-based queue</li>
+<li><a href="https://github.com/OptimalBits/bull" target="_blank">Bull (simpler alternative)</a></li>
+<li><a href="https://upstash.com/" target="_blank">Upstash Redis</a> - Serverless Redis</li>
+</ul>
+
+<h3>Database Scaling</h3>
+<ul>
+<li><a href="https://neon.tech/docs/introduction" target="_blank">Neon PostgreSQL</a> - Serverless Postgres</li>
+<li><a href="https://supabase.com/docs/guides/platform/performance" target="_blank">Supabase Performance Guide</a></li>
+<li><a href="https://www.postgresql.org/docs/current/ddl-partitioning.html" target="_blank">PostgreSQL Partitioning</a></li>
+</ul>
+
+<h3>Infrastructure</h3>
+<ul>
+<li><a href="https://fly.io/docs/" target="_blank">Fly.io Documentation</a> - Auto-scaling deployment</li>
+<li><a href="https://render.com/docs" target="_blank">Render</a> - Alternative PaaS</li>
+<li><a href="https://vercel.com/docs/edge-network/caching" target="_blank">Vercel Edge Caching</a></li>
+</ul>
+
+<h3>LLM Optimization</h3>
+<ul>
+<li><a href="https://platform.openai.com/docs/guides/prompt-caching" target="_blank">OpenAI Prompt Caching</a></li>
+<li><a href="https://docs.anthropic.com/claude/docs/prompt-caching" target="_blank">Claude Prompt Caching</a></li>
+<li><a href="https://platform.openai.com/docs/guides/fine-tuning" target="_blank">Fine-tuning Guide</a></li>
+</ul>
+
+<h2>Monitoring & Metrics</h2>
+<pre><code>// Key metrics da tracciare
+- Bandi processati/ora
+- Latency analisi AI (p50, p95, p99)
+- Cache hit rate (target: >80%)
+- Database connection pool usage
+- Job queue length & processing time
+- LLM API cost per bando
+- Matching accuracy (precision/recall)
+</code></pre>
+
+<p><strong>Tools:</strong> Grafana + Prometheus, Sentry (errors), PostHog (product analytics)</p>
+
+<h2>Next Steps per Ambra</h2>
+
+<div class="solution">
+<h3>🚀 Immediate Actions (This Week)</h3>
+<ol>
+<li><strong>Database Audit:</strong> Eseguire <code>EXPLAIN ANALYZE</code> sulle query più lente</li>
+<li><strong>Redis Setup:</strong> Deploy Upstash Redis (free tier) + implement caching layer</li>
+<li><strong>Cost Analysis:</strong> Tracciare LLM API costs per tipo di bando (importo, settore)</li>
+<li><strong>Load Testing:</strong> Simulare 1000 bandi/giorno con <code>k6</code> o <code>artillery</code></li>
+</ol>
+
+<h3>📋 Decision Points</h3>
+<ul>
+<li><strong>Q:</strong> Quanti bandi/giorno dobbiamo gestire nel prossimo anno?</li>
+<li><strong>Q:</strong> Budget mensile per LLM API calls?</li>
+<li><strong>Q:</strong> SLA target per latency matching? (es. <500ms)</li>
+<li><strong>Q:</strong> Multi-tenant isolation requirements? (shared vs dedicated DB)</li>
+</ul>
+
+<h3>🔬 Experiments</h3>
+<ol>
+<li>A/B test: GPT-4 vs GPT-3.5 vs fine-tuned model (accuracy vs cost)</li>
+<li>Benchmark: PostgreSQL full-text search vs Elasticsearch</li>
+<li>Prototype: Serverless functions (Supabase Edge) vs dedicated workers</li>
+</ol>
+</div>
+
+<h2>Estimated Costs (1000 bandi/day)</h2>
+<table style="width:100%; border-collapse: collapse;">
+<tr style="border-bottom: 1px solid #333;">
+<th style="text-align:left; padding:8px;">Component</th>
+<th style="text-align:right; padding:8px;">Current</th>
+<th style="text-align:right; padding:8px;">Optimized</th>
+</tr>
+<tr style="border-bottom: 1px solid #333;">
+<td style="padding:8px;">Hosting (Railway/Fly)</td>
+<td style="text-align:right; padding:8px;">$25/mo</td>
+<td style="text-align:right; padding:8px;">$50/mo</td>
+</tr>
+<tr style="border-bottom: 1px solid #333;">
+<td style="padding:8px;">Database (Supabase/Neon)</td>
+<td style="text-align:right; padding:8px;">$25/mo</td>
+<td style="text-align:right; padding:8px;">$50/mo</td>
+</tr>
+<tr style="border-bottom: 1px solid #333;">
+<td style="padding:8px;">Redis (Upstash)</td>
+<td style="text-align:right; padding:8px;">$0</td>
+<td style="text-align:right; padding:8px;">$10/mo</td>
+</tr>
+<tr style="border-bottom: 1px solid #333;">
+<td style="padding:8px;">LLM APIs (1000/day)</td>
+<td style="text-align:right; padding:8px;">$600/mo</td>
+<td style="text-align:right; padding:8px;">$150/mo</td>
+</tr>
+<tr style="border-bottom: 1px solid #333;">
+<td style="padding:8px;">Make/Automation</td>
+<td style="text-align:right; padding:8px;">$29/mo</td>
+<td style="text-align:right; padding:8px;">$0</td>
+</tr>
+<tr style="font-weight:bold;">
+<td style="padding:8px;">TOTAL</td>
+<td style="text-align:right; padding:8px;">~$680/mo</td>
+<td style="text-align:right; padding:8px;">~$260/mo</td>
+</tr>
+</table>
+
+<p style="margin-top:20px; color:#0f0;"><strong>ROI:</strong> 62% cost reduction + 10x capacity increase</p>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
