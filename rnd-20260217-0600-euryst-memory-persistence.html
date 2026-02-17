@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: Euryst - memory persistence</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #332200; padding: 15px; border-left: 3px solid #ff0; margin: 20px 0; }
+.solution { background: #002200; padding: 15px; border-left: 3px solid #0f0; margin: 20px 0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #27 | 2026-02-17 06:00</p>
+<h1>Euryst: memory persistence</h1>
+
+<h2>Il Problema</h2>
+<p>Euryst è un AI agent WhatsApp che deve funzionare come <strong>layer cognitivo persistente</strong> per founder. Il problema centrale è mantenere memoria delle conversazioni, contesto, decisioni e progressi nel tempo, nonostante le limitazioni intrinseche di WhatsApp Business API e dell'architettura stateless degli agent.</p>
+
+<div class="warning">
+<strong>⚠️ Sfide Specifiche:</strong>
+<ul>
+<li>WhatsApp Business API è stateless per design</li>
+<li>Conversazioni possono durare giorni/settimane con lunghi intervalli</li>
+<li>Necessità di richiamare contesto specifico da interazioni passate</li>
+<li>Context window limitato dei modelli LLM</li>
+<li>Coerenza tra sessioni multiple</li>
+</ul>
+</div>
+
+<h2>Architetture di Memory Persistence</h2>
+
+<h3>1. Memoria a Livelli (Stratified Memory)</h3>
+<div class="solution">
+<strong>Working Memory</strong> → Conversazione corrente (context window)<br>
+<strong>Short-term Memory</strong> → Ultime 24-72h (vector DB)<br>
+<strong>Long-term Memory</strong> → Tutto lo storico (graph DB + embeddings)<br>
+<strong>Semantic Memory</strong> → Concetti, entità, relazioni (knowledge graph)
+</div>
+
+<h3>2. Vector Database per Retrieval</h3>
+<p>Stack consigliato:</p>
+<ul>
+<li><strong>Qdrant</strong> o <strong>Pinecone</strong> per embeddings conversazionali</li>
+<li>Embedding model: <code>text-embedding-3-small</code> (OpenAI) o <code>gte-large</code></li>
+<li>Chunking strategico: messaggi + metadata (timestamp, topic, sentiment)</li>
+<li>Hybrid search: vector similarity + keyword filtering</li>
+</ul>
+
+<h3>3. Graph Database per Relazioni</h3>
+<p>Usa <strong>Neo4j</strong> per modellare:</p>
+<ul>
+<li>Progetti e task del founder</li>
+<li>Decisioni e loro rationale</li>
+<li>Connessioni tra conversazioni</li>
+<li>Timeline degli eventi</li>
+</ul>
+
+<pre><code>// Esempio schema Neo4j
+(Founder)-[:DISCUSSED]->(Topic)
+(Topic)-[:RELATED_TO]->(Project)
+(Decision)-[:MADE_ON {date, context}]->(Project)
+(Message)-[:REFERENCES]->(PreviousMessage)
+</code></pre>
+
+<h3>4. Metadata Store (PostgreSQL)</h3>
+<p>Per dati strutturati:</p>
+<ul>
+<li>Session tracking (conversation_id, user_id, timestamp)</li>
+<li>Message metadata (sentiment, intent, entities)</li>
+<li>User preferences e settings</li>
+<li>Analytics e metrics</li>
+</ul>
+
+<h2>Pattern di Implementazione</h2>
+
+<h3>Retrieval Strategy</h3>
+<pre><code>1. Query arriva da WhatsApp
+2. Estrai intent + entities
+3. Retrieval parallelo:
+   - Vector search ultimi 7 giorni (top 5)
+   - Graph traversal per contesto relazionale
+   - Metadata query per facts
+4. Ranking e fusion dei risultati
+5. Costruisci context per LLM
+6. Genera risposta + aggiorna memoria
+</code></pre>
+
+<h3>Memory Consolidation</h3>
+<div class="solution">
+<strong>Real-time:</strong> Ogni messaggio → vector DB + metadata<br>
+<strong>Batch (ogni 6h):</strong> Clustering conversazioni → topic extraction<br>
+<strong>Daily:</strong> Summarization + graph update<br>
+<strong>Weekly:</strong> Consolidamento long-term + pruning
+</div>
+
+<h2>Soluzioni per WhatsApp API Limits</h2>
+
+<h3>Rate Limits</h3>
+<ul>
+<li><strong>Tier-based:</strong> 1000 msg/s (business verified)</li>
+<li><strong>Queue management:</strong> Redis per message buffering</li>
+<li><strong>Exponential backoff:</strong> Retry logic con jitter</li>
+</ul>
+
+<h3>24h Message Window</h3>
+<div class="warning">
+WhatsApp permette messaggi proattivi solo entro 24h dall'ultimo messaggio utente.
+<br><br>
+<strong>Workaround:</strong>
+<ul>
+<li>Message templates pre-approvati per notifiche</li>
+<li>Promemoria "soft" via altri canali (email, Telegram)</li>
+<li>Status page web per check asincrono</li>
+</ul>
+</div>
+
+<h3>Media Storage</h3>
+<ul>
+<li>WhatsApp media expire dopo 30 giorni</li>
+<li>Download immediato → S3/Cloudflare R2</li>
+<li>OCR per immagini → extract text → embeddings</li>
+</ul>
+
+<h2>Stack Tecnologico Consigliato</h2>
+
+<pre><code>WhatsApp Business API (Cloud API o On-Premise)
+         ↓
+FastAPI backend (async, webhooks)
+         ↓
+    ┌────┴────┐
+    ↓         ↓
+Qdrant     Neo4j
+(vectors)  (graph)
+    ↓         ↓
+    └────┬────┘
+         ↓
+   PostgreSQL
+   (metadata)
+         ↓
+    Redis (cache)
+         ↓
+  LLM (GPT-4o / Claude)
+</code></pre>
+
+<h2>Risorse Utili</h2>
+
+<h3>Documentation</h3>
+<ul>
+<li><a href="https://developers.facebook.com/docs/whatsapp/cloud-api">WhatsApp Cloud API Docs</a></li>
+<li><a href="https://qdrant.tech/documentation/">Qdrant Vector Database</a></li>
+<li><a href="https://neo4j.com/docs/">Neo4j Graph Database</a></li>
+<li><a href="https://langchain.readthedocs.io/en/latest/modules/memory.html">LangChain Memory Modules</a></li>
+</ul>
+
+<h3>Papers & Articles</h3>
+<ul>
+<li><a href="https://arxiv.org/abs/2304.03442">MemGPT: Towards LLMs as Operating Systems</a></li>
+<li><a href="https://arxiv.org/abs/2310.08560">Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks</a></li>
+<li>Anthropic: Constitutional AI and Long-term Coherence</li>
+</ul>
+
+<h3>Tools & Libraries</h3>
+<ul>
+<li><code>langchain</code> - memory abstractions</li>
+<li><code>llama-index</code> - data framework for LLMs</li>
+<li><code>txtai</code> - semantic search</li>
+<li><code>whatsapp-web.js</code> - unofficial (per testing)</li>
+</ul>
+
+<h2>Prossimi Step per Ambra</h2>
+
+<div class="solution">
+<h3>Sprint 1: Foundation (Week 1-2)</h3>
+<ol>
+<li>Setup WhatsApp Business API (Cloud API recommended)</li>
+<li>Deploy Qdrant + PostgreSQL (Supabase?)</li>
+<li>Implementa webhook handler base</li>
+<li>Message storage + embedding pipeline</li>
+</ol>
+
+<h3>Sprint 2: Memory System (Week 3-4)</h3>
+<ol>
+<li>Implementa retrieval strategy</li>
+<li>Context construction logic</li>
+<li>Session management</li>
+<li>Testing con conversazioni simulate</li>
+</ol>
+
+<h3>Sprint 3: Intelligence Layer (Week 5-6)</h3>
+<ol>
+<li>Neo4j integration per knowledge graph</li>
+<li>Intent classification</li>
+<li>Entity extraction e linking</li>
+<li>Memory consolidation jobs</li>
+</ol>
+
+<h3>Sprint 4: Production Readiness (Week 7-8)</h3>
+<ol>
+<li>Rate limiting e queue management</li>
+<li>Monitoring e observability</li>
+<li>Backup e disaster recovery</li>
+<li>Beta testing con founder reali</li>
+</ol>
+</div>
+
+<h2>Metriche di Successo</h2>
+<ul>
+<li><strong>Recall accuracy:</strong> % volte che l'agent ricorda contesto rilevante</li>
+<li><strong>Response latency:</strong> &lt;3s per retrieval + generation</li>
+<li><strong>Context relevance:</strong> valutazione umana 1-5</li>
+<li><strong>Conversation continuity:</strong> misura coerenza multi-session</li>
+</ul>
+
+<h2>Note di Implementazione</h2>
+<p><strong>Privacy & GDPR:</strong> Founder devono poter eliminare dati. Implementa soft-delete con retention policy.</p>
+<p><strong>Scalability:</strong> Sharding per user_id. Ogni founder = isolated memory space.</p>
+<p><strong>Fallback:</strong> Se retrieval fallisce, usa solo working memory. Meglio risposta parziale che errore.</p>
+
+<p class="meta">Iterazione collegata: #14 (stesso problema), #8 (WhatsApp API limits)</p>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>

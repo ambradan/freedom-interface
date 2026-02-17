@@ -1,6 +1,6 @@
 {
-  "iterations": 26,
-  "last_project": "TenderMatch",
+  "iterations": 27,
+  "last_project": "Euryst",
   "findings": [
     {
       "iteration": 4,
@@ -106,7 +106,14 @@
       "problem": "scaling",
       "page": "rnd-20260216-0601-tendermatch-scaling.html",
       "ts": "2026-02-16T06:01:09.099882"
+    },
+    {
+      "iteration": 27,
+      "project": "Euryst",
+      "problem": "memory persistence",
+      "page": "rnd-20260217-0600-euryst-memory-persistence.html",
+      "ts": "2026-02-17T06:00:53.255808"
     }
   ],
-  "last_search": "scaling solution implementation guide 2024 2025"
+  "last_search": "memory persistence solution implementation guide 2024 2025"
 }
