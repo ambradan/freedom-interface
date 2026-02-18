@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: TenderMatch - multi-tenant</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #331a00; border-left: 4px solid #ff6600; padding: 12px; margin: 16px 0; }
+.solution { background: #1a2a1a; border-left: 4px solid #0f0; padding: 12px; margin: 16px 0; }
+pre { background: #222; padding: 12px; overflow-x: auto; border-left: 3px solid #0a0; }
+table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+th, td { padding: 8px; text-align: left; border-bottom: 1px solid #333; }
+th { color: #0f0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #28 | 2026-02-18 06:00</p>
+<h1>TenderMatch: multi-tenant</h1>
+
+<h2>Il Problema</h2>
+<p>TenderMatch è un compliance engine per gare pubbliche che deve servire multiple aziende (tenant) sulla stessa infrastruttura. Il multi-tenancy introduce sfide critiche:</p>
+
+<div class="warning">
+<strong>⚠️ Criticità Multi-Tenant</strong>
+<ul>
+<li><strong>Isolamento dati</strong>: Ogni tenant deve vedere SOLO i propri bandi/gare</li>
+<li><strong>Performance</strong>: Un tenant pesante non può degradare gli altri</li>
+<li><strong>Costi</strong>: Ottimizzare infrastruttura condivisa vs. isolamento</li>
+<li><strong>Compliance</strong>: GDPR, data residency per PA italiane</li>
+<li><strong>Customization</strong>: Ogni PA può avere regole specifiche</li>
+</ul>
+</div>
+
+<h2>Architetture Multi-Tenant</h2>
+
+<table>
+<tr>
+<th>Approccio</th>
+<th>Pro</th>
+<th>Contro</th>
+<th>Use Case</th>
+</tr>
+<tr>
+<td><strong>Shared Database + Row-Level Security</strong></td>
+<td>Costi bassi, semplice</td>
+<td>Rischio data leak, scaling limitato</td>
+<td>MVP, pochi tenant</td>
+</tr>
+<tr>
+<td><strong>Schema per Tenant</strong></td>
+<td>Isolamento medio, gestibile</td>
+<td>Migrazione complessa, limiti PostgreSQL</td>
+<td>10-100 tenant</td>
+</tr>
+<tr>
+<td><strong>Database per Tenant</strong></td>
+<td>Isolamento totale, compliance</td>
+<td>Costi alti, ops complesso</td>
+<td>Enterprise, PA grandi</td>
+</tr>
+<tr>
+<td><strong>Hybrid (pool + dedicated)</strong></td>
+<td>Flessibilità, ottimizzazione costi</td>
+<td>Architettura complessa</td>
+<td>Scale-up graduale</td>
+</tr>
+</table>
+
+<h2>Implementazione con Stack TenderMatch</h2>
+
+<h3>1. Row-Level Security (Supabase + PostgreSQL)</h3>
+
+<div class="solution">
+<strong>✓ Soluzione Raccomandata per MVP</strong>
+<p>Supabase ha RLS nativo. Perfetto per partire.</p>
+</div>
+
+<pre>
+-- Schema PostgreSQL
+CREATE TABLE tenants (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  domain TEXT UNIQUE,
+  settings JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE tenders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id),
+  title TEXT NOT NULL,
+  cig TEXT,
+  amount NUMERIC,
+  deadline DATE,
+  analysis JSONB, -- AI analysis results
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Row-Level Security
+ALTER TABLE tenders ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation ON tenders
+  FOR ALL
+  USING (tenant_id = current_setting('app.tenant_id')::UUID);
+
+-- Index per performance
+CREATE INDEX idx_tenders_tenant ON tenders(tenant_id);
+CREATE INDEX idx_tenders_deadline ON tenders(tenant_id, deadline);
+</pre>
+
+<h3>2. Middleware Express per Tenant Context</h3>
+
+<pre>
+// middleware/tenant.js
+const tenantMiddleware = async (req, res, next) => {
+  const domain = req.hostname;
+  const apiKey = req.headers['x-api-key'];
+  
+  // Resolve tenant da domain o API key
+  const tenant = await supabase
+    .from('tenants')
+    .select('id, settings')
+    .or(`domain.eq.${domain},api_key.eq.${apiKey}`)
+    .single();
+  
+  if (!tenant.data) {
+    return res.status(403).json({ error: 'Invalid tenant' });
+  }
+  
+  // Set tenant context per RLS
+  req.tenant = tenant.data;
+  
+  // Supabase client con tenant context
+  req.supabase = supabase.rpc('set_tenant', { 
+    tenant_id: tenant.data.id 
+  });
+  
+  next();
+};
+
+// routes/tenders.js
+app.get('/api/tenders', tenantMiddleware, async (req, res) => {
+  // RLS automaticamente filtra per tenant_id
+  const { data } = await req.supabase
+    .from('tenders')
+    .select('*')
+    .order('deadline', { ascending: true });
+  
+  res.json(data);
+});
+</pre>
+
+<h3>3. Stripe Multi-Tenant Billing</h3>
+
+<pre>
+// Stripe Connected Accounts per tenant
+const createTenant = async (tenantData) => {
+  // 1. Crea tenant in DB
+  const tenant = await supabase
+    .from('tenants')
+    .insert(tenantData)
+    .select()
+    .single();
+  
+  // 2. Crea Stripe Customer
+  const customer = await stripe.customers.create({
+    name: tenantData.name,
+    email: tenantData.email,
+    metadata: { tenant_id: tenant.data.id }
+  });
+  
+  // 3. Link Stripe Customer a tenant
+  await supabase
+    .from('tenants')
+    .update({ stripe_customer_id: customer.id })
+    .eq('id', tenant.data.id);
+  
+  return tenant.data;
+};
+
+// Usage-based pricing per tenant
+const trackUsage = async (tenantId, event) => {
+  await supabase.from('usage_events').insert({
+    tenant_id: tenantId,
+    event_type: event.type, // 'tender_analysis', 'api_call'
+    quantity: event.quantity,
+    timestamp: new Date()
+  });
+};
+</pre>
+
+<h3>4. Make.com per Automazioni Multi-Tenant</h3>
+
+<div class="solution">
+<strong>✓ Pattern: Dynamic Webhook Routing</strong>
+<p>Ogni tenant ha webhook univoco per notifiche bandi.</p>
+</div>
+
+<pre>
+// Webhook dinamico per tenant
+POST https://hook.eu1.make.com/{{tenant_webhook_id}}
+
+// Payload
+{
+  "tenant_id": "uuid",
+  "tender": {
+    "cig": "123456",
+    "title": "Fornitura servizi IT",
+    "amount": 50000,
+    "deadline": "2026-03-15"
+  },
+  "match_score": 0.87,
+  "compliance_issues": []
+}
+
+// Make scenario:
+1. Ricevi webhook
+2. Lookup tenant settings da Supabase
+3. Se match_score > tenant.threshold:
+   - Invia email personalizzata
+   - Notifica Slack/Teams
+   - Crea task in PM tool
+</pre>
+
+<h2>Scaling Strategy</h2>
+
+<h3>Phase 1: MVP (1-10 tenant)</h3>
+<ul>
+<li>✓ Single Supabase DB con RLS</li>
+<li>✓ Express middleware per tenant context</li>
+<li>✓ Shared Railway deployment</li>
+<li>Cost: ~$50/mese</li>
+</ul>
+
+<h3>Phase 2: Growth (10-50 tenant)</h3>
+<ul>
+<li>→ Connection pooling (PgBouncer)</li>
+<li>→ Redis cache per tenant settings</li>
+<li>→ Separate read replicas</li>
+<li>Cost: ~$200-500/mese</li>
+</ul>
+
+<h3>Phase 3: Scale (50+ tenant)</h3>
+<ul>
+<li>→ Schema-per-tenant migration</li>
+<li>→ Sharding per tenant size</li>
+<li>→ Dedicated instances per enterprise</li>
+<li>Cost: Variable, $1k-10k/mese</li>
+</ul>
+
+<h2>Security Checklist</h2>
+
+<div class="warning">
+<strong>🔒 Obbligatorio per PA</strong>
+<ul>
+<li>[ ] RLS policies tested con automated tests</li>
+<li>[ ] Audit log per ogni accesso dati</li>
+<li>[ ] Encryption at rest (Supabase default)</li>
+<li>[ ] API rate limiting per tenant</li>
+<li>[ ] GDPR compliance: data export/delete</li>
+<li>[ ] Penetration testing pre-produzione</li>
+</ul>
+</div>
+
+<pre>
+-- Audit log table
+CREATE TABLE audit_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  user_id UUID,
+  action TEXT NOT NULL, -- 'read', 'write', 'delete'
+  resource_type TEXT, -- 'tender', 'analysis'
+  resource_id UUID,
+  ip_address INET,
+  user_agent TEXT,
+  timestamp TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Trigger automatico
+CREATE OR REPLACE FUNCTION audit_trigger()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO audit_log (tenant_id, action, resource_type, resource_id)
+  VALUES (NEW.tenant_id, TG_OP, TG_TABLE_NAME, NEW.id);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER tenders_audit
+AFTER INSERT OR UPDATE OR DELETE ON tenders
+FOR EACH ROW EXECUTE FUNCTION audit_trigger();
+</pre>
+
+<h2>Risorse Utili</h2>
+
+<ul>
+<li><a href="https://supabase.com/docs/guides/auth/row-level-security">Supabase RLS Documentation</a> - Guide ufficiale</li>
+<li><a href="https://www.postgresql.org/docs/current/ddl-rowsecurity.html">PostgreSQL Row Security</a> - Docs PostgreSQL</li>
+<li><a href="https://stripe.com/docs/connect">Stripe Connect</a> - Multi-tenant billing</li>
+<li><a href="https://railway.app/docs/databases/postgresql#connection-pooling">Railway Connection Pooling</a></li>
+<li><a href="https://github.com/citusdata/citus">Citus Data</a> - PostgreSQL sharding extension (future)</li>
+</ul>
+
+<h2>Testing Multi-Tenancy</h2>
+
+<pre>
+// test/multi-tenant.test.js
+const { createClient } = require('@supabase/supabase-js');
+
+describe('Multi-tenant isolation', () => {
+  let tenant1Client, tenant2Client;
+  
+  beforeEach(async () => {
+    // Setup 2 tenant contexts
+    tenant1Client = createClient(SUPABASE_URL, SUPABASE_KEY);
+    await tenant1Client.rpc('set_tenant', { tenant_id: TENANT1_ID });
+    
+    tenant2Client = createClient(SUPABASE_URL, SUPABASE_KEY);
+    await tenant2Client.rpc('set_tenant', { tenant_id: TENANT2_ID });
+  });
+  
+  it('should NOT see other tenant data', async () => {
+    // Tenant1 crea tender
+    await tenant1Client.from('tenders').insert({
+      title: 'Tender privato Tenant1',
+      amount: 10000
+    });
+    
+    // Tenant2 NON deve vederlo
+    const { data } = await tenant2Client
+      .from('tenders')
+      .select('*')
+      .eq('title', 'Tender privato Tenant1');
+    
+    expect(data).toHaveLength(0);
+  });
+  
+  it('should handle concurrent requests', async () => {
+    // Simula 100 richieste concorrenti da 2 tenant
+    const requests = [];
+    for (let i = 0; i < 50; i++) {
+      requests.push(tenant1Client.from('tenders').select('count'));
+      requests.push(tenant2Client.from('tenders').select('count'));
+    }
+    
+    const results = await Promise.all(requests);
+    // Verifica nessun cross-contamination
+  });
+});
+</pre>
+
+<h2>Prossimi Step per Ambra</h2>
+
+<div class="solution">
+<strong>Week 1-2: Foundation</strong>
+<ol>
+<li><strong>Implementa RLS base</strong>
+   <ul>
+   <li>Crea schema <code>tenants</code> + <code>tenders</code></li>
+   <li>Setup RLS policies</li>
+   <li>Test isolation con 2 tenant dummy</li>
+   </ul>
+</li>
+<li><strong>Express tenant middleware</strong>
+   <ul>
+   <li>Domain/API key resolution</li>
+   <li>Supabase client con context</li>
+   <li>Error handling</li>
+   </ul>
+</li>
+</ol>
+
+<strong>Week 3-4: Production Ready</strong>
+<ol start="3">
+<li><strong>Stripe integration</strong>
+   <ul>
+   <li>Customer creation per tenant</li>
+   <li>Usage tracking</li>
+   <li>Webhook handling</li>
+   </ul>
+</li>
+<li><strong>Monitoring & Audit</strong>
+   <ul>
+   <li>Audit log implementation</li>
+   <li>Railway metrics dashboard</li>
+   <li>Alert per data leak attempts</li>
+   </ul>
+</li>
+</ol>
+
+<strong>Week 5+: Scale Prep</strong>
+<ol start="5">
+<li><strong>Performance optimization</strong>
+   <ul>
+   <li>Connection pooling setup</li>
+   <li>Redis cache per tenant metadata</li>
+   <li>Load testing con 10+ tenant simulati</li>
+   </ul>
+</li>
+<li><strong>Documentation</strong>
+   <ul>
+   <li>Onboarding guide per nuovi tenant</li>
+   <li>API docs con tenant context</li>
+   <li>Security compliance report per PA</li>
+   </ul>
+</li>
+</ol>
+</div>
+
+<h2>Red Flags da Evitare</h2>
+
+<div class="warning">
+<strong>❌ Common Pitfalls</strong>
+<ul>
+<li><strong>Hardcoded tenant_id</strong>: Sempre da context, mai hardcoded</li>
+<li><strong>Client-side tenant selection</strong>: Validazione server-side obbligatoria</li>
+<li><strong>Shared API keys</strong>: 1 API key = 1 tenant, sempre</li>
+<li><strong>No audit log</strong>: Per PA è compliance requirement</li>
+<li><strong>Migrations senza tenant awareness</strong>: Ogni migration deve testare RLS</li>
+</ul>
+</div>
+
+<h2>Conclusione</h2>
+
+<p>Per TenderMatch, la strategia multi-tenant ottimale è:</p>
+
+<ol>
+<li><strong>Start simple</strong>: RLS + middleware (2-3 settimane implementazione)</li>
+<li><strong>Validate early</strong>: 3-5 PA pilota per testare isolation</li>
+<li><strong>Monitor metrics</strong>: Query performance per tenant, connection pool usage</li>
+<li><strong>Plan migration path</strong>: Schema-per-tenant quando > 30 tenant</li>
+</ol>
+
+<p>Stack Lovable + Supabase + Railway è perfetto per questo approccio. RLS nativo di Supabase elimina 80% del lavoro custom.</p>
+
+<p class="meta">Next R&D: TenderMatch scaling strategy (connection pooling, caching, sharding)</p>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
