@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: Euryst - memory persistence</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #331a00; border-left: 4px solid #ff6600; padding: 12px; margin: 20px 0; }
+.solution { background: #1a2a1a; border-left: 4px solid #0f0; padding: 12px; margin: 20px 0; }
+pre { background: #222; padding: 15px; overflow-x: auto; border-radius: 4px; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #29 | 2026-02-19 06:00</p>
+<h1>Euryst: memory persistence</h1>
+
+<h2>Il problema</h2>
+<p>Euryst è un AI agent WhatsApp che deve funzionare come <strong>layer cognitivo persistente</strong> per founder. Il problema centrale è mantenere memoria contestuale delle conversazioni attraverso sessioni multiple, permettendo all'agent di:</p>
+<ul>
+<li>Ricordare decisioni prese in conversazioni precedenti</li>
+<li>Mantenere il contesto di progetti in corso</li>
+<li>Costruire una comprensione progressiva del founder e del suo business</li>
+<li>Evitare di ripetere domande già fatte</li>
+<li>Fornire continuità cognitiva tra sessioni distanti nel tempo</li>
+</ul>
+
+<div class="warning">
+<strong>⚠️ Sfida critica:</strong> WhatsApp Business API è stateless per design. Ogni messaggio è un evento isolato. La memoria deve essere costruita esternamente.
+</div>
+
+<h2>Architetture di memory persistence</h2>
+
+<h3>1. Short-term memory (conversazione corrente)</h3>
+<pre><code>Session buffer:
+- Ultimi N messaggi in RAM
+- Context window dell'LLM
+- Durata: singola sessione
+- Limite: 8k-32k token tipicamente</code></pre>
+
+<h3>2. Medium-term memory (giornata/settimana)</h3>
+<pre><code>Semantic memory:
+- Vector DB (Qdrant, Pinecone, Weaviate)
+- Embedding dei messaggi chiave
+- Retrieval contestuale
+- Durata: giorni/settimane</code></pre>
+
+<h3>3. Long-term memory (mesi/anni)</h3>
+<pre><code>Structured knowledge:
+- PostgreSQL/Supabase per fatti strutturati
+- Neo4j per relazioni tra concetti
+- Timeline di eventi e decisioni
+- Durata: permanente</code></pre>
+
+<h2>Stack consigliato per Euryst</h2>
+
+<div class="solution">
+<strong>✓ Architettura ibrida multi-layer:</strong>
+
+<pre><code>┌─────────────────────────────────────┐
+│   WhatsApp Business API (webhook)   │
+└──────────────┬──────────────────────┘
+               │
+┌──────────────▼──────────────────────┐
+│  Agent Core (Python/Node.js)        │
+│  - Message routing                  │
+│  - Context assembly                 │
+│  - LLM orchestration                │
+└──────────────┬──────────────────────┘
+               │
+       ┌───────┴────────┐
+       │                │
+┌──────▼─────┐   ┌─────▼──────┐
+│  Vector DB │   │ PostgreSQL │
+│  (Qdrant)  │   │ (Supabase) │
+│            │   │            │
+│ Semantic   │   │ Structured │
+│ search     │   │ facts      │
+└────────────┘   └────────────┘</code></pre>
+</div>
+
+<h3>Componenti specifici</h3>
+
+<p><strong>1. Vector Store (Qdrant):</strong></p>
+<pre><code>collections:
+  - messages: tutti i messaggi con embedding
+  - insights: estratti di conversazioni importanti
+  - decisions: decisioni prese dal founder
+
+query strategy:
+  - Hybrid search (semantic + keyword)
+  - Time-weighted relevance
+  - User-specific filtering</code></pre>
+
+<p><strong>2. Structured DB (PostgreSQL/Supabase):</strong></p>
+<pre><code>tables:
+  - users (founder profile, preferences)
+  - projects (progetti attivi, status)
+  - conversations (metadata, summary)
+  - decisions (decisioni chiave, timestamp)
+  - context_graph (relazioni tra concetti)
+
+indexes:
+  - user_id + timestamp
+  - project_id + status
+  - Full-text search su decisions</code></pre>
+
+<p><strong>3. Context Assembly Pipeline:</strong></p>
+<pre><code>Per ogni nuovo messaggio:
+
+1. Retrieve relevant memories:
+   - Last 10 messages (short-term)
+   - Top 5 semantic matches (vector)
+   - Active projects (structured)
+   - Recent decisions (structured)
+
+2. Build context prompt:
+   - System prompt con identity
+   - Memory summary
+   - Current conversation
+   - Relevant facts
+
+3. LLM inference con memory-aware prompt
+
+4. Store new memory:
+   - Message embedding → Qdrant
+   - Extracted facts → PostgreSQL
+   - Update conversation summary</code></pre>
+
+<h2>Implementazione pratica</h2>
+
+<h3>Pattern: Memory-augmented agent</h3>
+<pre><code>class EurystAgent:
+    def __init__(self):
+        self.vector_store = QdrantClient()
+        self.db = SupabaseClient()
+        self.llm = OpenAI()
+    
+    async def process_message(self, user_id, message):
+        # 1. Retrieve memories
+        memories = await self.retrieve_context(user_id, message)
+        
+        # 2. Build prompt
+        prompt = self.build_memory_prompt(memories, message)
+        
+        # 3. Generate response
+        response = await self.llm.chat(prompt)
+        
+        # 4. Store new memory
+        await self.store_memory(user_id, message, response)
+        
+        return response
+    
+    async def retrieve_context(self, user_id, message):
+        # Vector search
+        semantic = await self.vector_store.search(
+            collection="messages",
+            query_vector=embed(message),
+            filter={"user_id": user_id},
+            limit=5
+        )
+        
+        # Structured data
+        projects = await self.db.table("projects")\
+            .select("*")\
+            .eq("user_id", user_id)\
+            .eq("status", "active")\
+            .execute()
+        
+        decisions = await self.db.table("decisions")\
+            .select("*")\
+            .eq("user_id", user_id)\
+            .order("created_at", desc=True)\
+            .limit(3)\
+            .execute()
+        
+        return {
+            "semantic": semantic,
+            "projects": projects.data,
+            "decisions": decisions.data
+        }
+</code></pre>
+
+<h2>Risorse tecniche</h2>
+
+<h3>Vector databases</h3>
+<ul>
+<li><a href="https://qdrant.tech/documentation/">Qdrant Documentation</a> - Vector DB ottimizzato per production</li>
+<li><a href="https://www.pinecone.io/learn/vector-database/">Pinecone Vector Database Guide</a> - Managed alternative</li>
+<li><a href="https://supabase.com/docs/guides/ai/vector-columns">Supabase pgvector</a> - Vector extension per PostgreSQL</li>
+</ul>
+
+<h3>Memory architectures</h3>
+<ul>
+<li><a href="https://github.com/langchain-ai/langchain/tree/master/libs/langchain/langchain/memory">LangChain Memory</a> - Patterns per memory management</li>
+<li><a href="https://www.anthropic.com/index/claude-2-1-prompting">Claude Long Context</a> - 200k context window strategies</li>
+<li><a href="https://github.com/mem0ai/mem0">Mem0</a> - Memory layer for AI agents</li>
+</ul>
+
+<h3>WhatsApp Business API</h3>
+<ul>
+<li><a href="https://developers.facebook.com/docs/whatsapp/cloud-api/">WhatsApp Cloud API Docs</a> - Official documentation</li>
+<li><a href="https://github.com/WhatsApp/WhatsApp-Nodejs-SDK">WhatsApp Node.js SDK</a> - Official SDK</li>
+<li><a href="https://wwebjs.dev/">whatsapp-web.js</a> - Alternative unofficial library</li>
+</ul>
+
+<h2>Strategie di ottimizzazione</h2>
+
+<h3>1. Memory pruning</h3>
+<pre><code>- Decay factor per vecchie memorie
+- Importance scoring (decisioni > small talk)
+- Compression di conversazioni lunghe
+- Archive di memorie inattive</code></pre>
+
+<h3>2. Cost optimization</h3>
+<pre><code>- Cache di embedding frequenti
+- Batch processing per vector storage
+- Summarization di conversazioni lunghe
+- Smart retrieval (non sempre serve tutto)</code></pre>
+
+<h3>3. Latency optimization</h3>
+<pre><code>- Async memory retrieval
+- Preload di context per utenti attivi
+- Redis cache per hot data
+- Streaming response mentre si salva</code></pre>
+
+<h2>Metriche di successo</h2>
+
+<ul>
+<li><strong>Recall accuracy:</strong> % di memorie rilevanti recuperate</li>
+<li><strong>Context relevance:</strong> Quanto il context aiuta la risposta</li>
+<li><strong>User satisfaction:</strong> Founder sente continuità?</li>
+<li><strong>Memory efficiency:</strong> Token usati vs valore aggiunto</li>
+<li><strong>Latency:</strong> Tempo retrieval + inference < 3s</li>
+</ul>
+
+<h2>Next steps per Ambra</h2>
+
+<div class="solution">
+<strong>Sprint 1: MVP memory (settimana 1-2)</strong>
+<ol>
+<li>Setup Qdrant Cloud (free tier) + Supabase</li>
+<li>Implementa basic vector storage per messaggi</li>
+<li>Context retrieval semplice (top-5 semantic)</li>
+<li>Test con 1 founder per 1 settimana</li>
+</ol>
+
+<strong>Sprint 2: Structured memory (settimana 3-4)</strong>
+<ol>
+<li>Schema PostgreSQL per projects/decisions</li>
+<li>Extraction pipeline (LLM → structured data)</li>
+<li>Hybrid retrieval (vector + structured)</li>
+<li>Dashboard per visualizzare memoria</li>
+</ol>
+
+<strong>Sprint 3: Optimization (settimana 5-6)</strong>
+<ol>
+<li>Memory pruning e compression</li>
+<li>Cost/latency optimization</li>
+<li>A/B test con/senza memoria avanzata</li>
+<li>Scale a 10 founder</li>
+</ol>
+</div>
+
+<h2>Riferimenti architetturali</h2>
+
+<p>Esempi di AI agents con memoria persistente:</p>
+<ul>
+<li><strong>Rewind AI:</strong> Personal memory search</li>
+<li><strong>Notion AI:</strong> Context-aware workspace assistant</li>
+<li><strong>ChatGPT Memory:</strong> Cross-session user preferences</li>
+<li><strong>Mem:</strong> Self-organizing knowledge base</li>
+</ul>
+
+<p class="meta">Ultima revisione: 2026-02-19 | Prossima iterazione: #30</p>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
