@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: Freedom Stack - long-term coherence</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #332200; border-left: 4px solid #ff0; padding: 12px; margin: 20px 0; }
+.solution { background: #002200; border-left: 4px solid #0f0; padding: 12px; margin: 20px 0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #32 | 2026-02-22 06:00</p>
+<h1>Freedom Stack: long-term coherence</h1>
+
+<h2>Il Problema</h2>
+<p>Il <strong>long-term coherence</strong> è la sfida più critica per AI autonome con memoria episodica. Freedom Stack deve mantenere coerenza comportamentale e narrativa attraverso migliaia di interazioni distribuite nel tempo, evitando:</p>
+<ul>
+<li><strong>Drift semantico</strong>: cambio graduale di significato nei concetti memorizzati</li>
+<li><strong>Contraddizioni accumulate</strong>: decisioni che contraddicono scelte precedenti</li>
+<li><strong>Loss of context</strong>: perdita del "filo rosso" tra sessioni distanti</li>
+<li><strong>Identity fragmentation</strong>: personalità che diverge dal Genesis protocol</li>
+</ul>
+
+<div class="warning">
+<strong>⚠️ Critical:</strong> Con Qdrant (vector), Neo4j (graph), PostgreSQL (relational) e context window limitati, la coerenza a lungo termine richiede architettura specifica, non solo "più memoria".
+</div>
+
+<h2>Architettura Attuale</h2>
+<p>Freedom Stack usa:</p>
+<ul>
+<li><strong>Qdrant</strong>: memoria episodica vettoriale (semantic similarity)</li>
+<li><strong>Neo4j</strong>: grafo di relazioni tra concetti/eventi</li>
+<li><strong>PostgreSQL</strong>: metadata strutturati e timeline</li>
+<li><strong>Genesis protocol</strong>: constitution iniziale dell'AI</li>
+</ul>
+<p>Il problema: questi layer non comunicano abbastanza per garantire coerenza emergente.</p>
+
+<h2>Approcci Consolidati</h2>
+
+<h3>1. Memory Consolidation Pipeline</h3>
+<div class="solution">
+<strong>Strategia:</strong> Processo batch notturno che consolida memorie frammentate.
+<pre><code># Pseudo-architettura
+ogni 24h:
+  - Cluster memorie simili (Qdrant)
+  - Identifica contraddizioni (Neo4j query)
+  - Crea "summary nodes" (compression)
+  - Aggiorna Genesis context con insights
+  - Marca memorie obsolete (soft delete)
+</code></pre>
+<p><strong>Riferimenti:</strong></p>
+<ul>
+<li>MemGPT: hierarchical memory (archival → working)</li>
+<li>Anthropic Constitutional AI: periodic alignment checks</li>
+</ul>
+</div>
+
+<h3>2. Coherence Scoring Layer</h3>
+<div class="solution">
+<strong>Strategia:</strong> Ogni azione viene validata contro "coherence score".
+<pre><code>def check_coherence(new_action, context):
+  # Retrieve semantically similar past actions
+  similar = qdrant.search(new_action.embedding)
+  
+  # Check graph constraints
+  conflicts = neo4j.query("""
+    MATCH (a:Action {id: $new_id})-[:CONTRADICTS]->(past)
+    RETURN past
+  """)
+  
+  # Score against Genesis
+  genesis_alignment = cosine_sim(
+    new_action.embedding,
+    genesis_protocol.core_values
+  )
+  
+  return weighted_score(similar, conflicts, genesis_alignment)
+</code></pre>
+<p><strong>Threshold:</strong> Se score < 0.7, trigger human review o auto-correction.</p>
+</div>
+
+<h3>3. Temporal Decay + Reinforcement</h3>
+<div class="solution">
+<strong>Strategia:</strong> Memorie hanno "strength" che decade nel tempo, ma viene reinforced se riutilizzata.
+<pre><code>class EpisodicMemory:
+  strength: float  # 0.0-1.0
+  last_accessed: datetime
+  access_count: int
+  
+  def decay(self):
+    days_ago = (now - self.last_accessed).days
+    self.strength *= 0.95 ** days_ago
+  
+  def reinforce(self):
+    self.strength = min(1.0, self.strength + 0.1)
+    self.access_count += 1
+</code></pre>
+<p>Memorie con strength < 0.2 vanno in "cold storage" (non più nel retrieval attivo).</p>
+</div>
+
+<h3>4. Multi-Hop Reasoning su Neo4j</h3>
+<div class="solution">
+<strong>Strategia:</strong> Prima di rispondere, esplora il grafo per "catene di coerenza".
+<pre><code>MATCH path = (current:Event)-[:CAUSED_BY*1..5]->(root:Event)
+WHERE current.timestamp > $recent
+  AND root.type = 'genesis_decision'
+RETURN path, 
+       length(path) as reasoning_depth,
+       collect(nodes(path)) as causal_chain
+ORDER BY reasoning_depth DESC
+LIMIT 5
+</code></pre>
+<p>L'AI può "spiegare" perché una decisione è coerente tracciando il path fino al Genesis.</p>
+</div>
+
+<h2>Stack-Specific Implementation</h2>
+
+<h3>Qdrant: Metadata Filtering</h3>
+<pre><code>qdrant.search(
+  collection="memories",
+  query_vector=embedding,
+  query_filter={
+    "must": [
+      {"key": "coherence_score", "range": {"gte": 0.7}},
+      {"key": "genesis_aligned", "match": {"value": True}}
+    ]
+  },
+  limit=10
+)
+</code></pre>
+
+<h3>Neo4j: Constraint Checking</h3>
+<pre><code>CREATE CONSTRAINT coherence_rule
+FOR (a:Action)
+REQUIRE (
+  NOT EXISTS {
+    MATCH (a)-[:CONTRADICTS]->(past:Action)
+    WHERE past.genesis_core = true
+  }
+)
+</code></pre>
+
+<h3>PostgreSQL: Audit Log</h3>
+<pre><code>CREATE TABLE coherence_audit (
+  id SERIAL PRIMARY KEY,
+  action_id UUID,
+  coherence_score FLOAT,
+  conflicts JSONB,
+  resolution TEXT,
+  reviewed_by TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+</code></pre>
+
+<h2>Risorse Tecniche</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2310.08560">MemGPT Paper</a> - Virtual context management</li>
+<li><a href="https://www.anthropic.com/index/constitutional-ai-harmlessness-from-ai-feedback">Constitutional AI</a> - Alignment over time</li>
+<li><a href="https://github.com/langchain-ai/langchain/discussions/9033">LangChain Memory</a> - Conversational buffer strategies</li>
+<li><a href="https://neo4j.com/docs/graph-data-science/current/algorithms/node-similarity/">Neo4j Node Similarity</a> - Detect drift in concept graph</li>
+<li><a href="https://qdrant.tech/documentation/concepts/filtering/">Qdrant Filtering</a> - Metadata-based coherence</li>
+</ul>
+
+<h2>Metriche di Successo</h2>
+<table border="1" cellpadding="8" style="border-collapse: collapse; width: 100%;">
+<tr style="background: #222;">
+<th>Metrica</th>
+<th>Target</th>
+<th>Come Misurare</th>
+</tr>
+<tr>
+<td>Coherence Score</td>
+<td>&gt; 0.85</td>
+<td>Media weekly su tutte le azioni</td>
+</tr>
+<tr>
+<td>Contradiction Rate</td>
+<td>&lt; 2%</td>
+<td>Neo4j query su CONTRADICTS edges</td>
+</tr>
+<tr>
+<td>Genesis Alignment</td>
+<td>&gt; 0.90</td>
+<td>Cosine similarity con core values</td>
+</tr>
+<tr>
+<td>Memory Drift</td>
+<td>&lt; 5%/month</td>
+<td>Centroid shift in Qdrant clusters</td>
+</tr>
+</table>
+
+<h2>Next Steps per Ambra</h2>
+<ol>
+<li><strong>Immediate (Settimana 1-2):</strong>
+  <ul>
+    <li>Implementa <code>coherence_score</code> field in Qdrant metadata</li>
+    <li>Crea Neo4j constraint per <code>:CONTRADICTS</code> relationships</li>
+    <li>Setup PostgreSQL audit table</li>
+  </ul>
+</li>
+<li><strong>Short-term (Mese 1):</strong>
+  <ul>
+    <li>Build memory consolidation cron job (FastAPI + Celery)</li>
+    <li>Implement temporal decay function con reinforcement</li>
+    <li>Create Telegram alert per low coherence scores</li>
+  </ul>
+</li>
+<li><strong>Mid-term (Mese 2-3):</strong>
+  <ul>
+    <li>Multi-hop reasoning engine su Neo4j</li>
+    <li>Genesis protocol versioning (track evolution)</li>
+    <li>Dashboard Vercel per visualizzare coherence metrics</li>
+  </ul>
+</li>
+<li><strong>Long-term (Q2 2026):</strong>
+  <ul>
+    <li>Self-healing: AI auto-corregge contraddizioni</li>
+    <li>Periodic Genesis "constitutional conventions"</li>
+    <li>Publish research paper su architecture</li>
+  </ul>
+</li>
+</ol>
+
+<h2>Codice di Esempio</h2>
+<pre><code># freedom_stack/coherence/validator.py
+from typing import List, Dict
+import numpy as np
+from qdrant_client import QdrantClient
+from neo4j import GraphDatabase
+
+class CoherenceValidator:
+    def __init__(self, qdrant: QdrantClient, neo4j_driver):
+        self.qdrant = qdrant
+        self.neo4j = neo4j_driver
+        self.genesis_embedding = self._load_genesis()
+    
+    def validate_action(self, action: Dict) -> float:
+        """Returns coherence score 0.0-1.0"""
+        
+        # 1. Semantic similarity to past
+        similar = self.qdrant.search(
+            collection_name="actions",
+            query_vector=action["embedding"],
+            limit=20
+        )
+        semantic_score = np.mean([s.score for s in similar])
+        
+        # 2. Graph constraints
+        with self.neo4j.session() as session:
+            conflicts = session.run("""
+                MATCH (new:Action {id: $id})
+                MATCH (new)-[:CONTRADICTS]->(past)
+                RETURN count(past) as conflict_count
+            """, id=action["id"]).single()["conflict_count"]
+        
+        constraint_score = 1.0 if conflicts == 0 else 0.0
+        
+        # 3. Genesis alignment
+        genesis_score = np.dot(
+            action["embedding"],
+            self.genesis_embedding
+        )
+        
+        # Weighted combination
+        return (
+            0.3 * semantic_score +
+            0.4 * constraint_score +
+            0.3 * genesis_score
+        )
+    
+    def _load_genesis(self) -> np.ndarray:
+        # Load Genesis protocol embedding
+        result = self.qdrant.retrieve(
+            collection_name="genesis",
+            ids=["core_values_v1"]
+        )
+        return np.array(result[0].vector)
+</code></pre>
+
+<div class="warning">
+<strong>Attenzione:</strong> Long-term coherence è un problema di <em>architettura</em>, non di prompt engineering. Richiede infrastruttura dedicata e monitoring continuo.
+</div>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
