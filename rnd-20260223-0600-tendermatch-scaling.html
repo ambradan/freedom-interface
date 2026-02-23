@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: TenderMatch - scaling</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #332200; padding: 15px; border-left: 4px solid #ff9900; margin: 20px 0; }
+.solution { background: #002211; padding: 15px; border-left: 4px solid #00ff88; margin: 20px 0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #33 | 2026-02-23 06:00</p>
+<h1>TenderMatch: scaling</h1>
+
+<h2>Il Problema</h2>
+<p>TenderMatch è un compliance engine per gare pubbliche che analizza bandi usando AI. Lo stack attuale (Lovable, Express, Railway, Supabase, PostgreSQL, Stripe, Make) funziona per MVP, ma presenta limiti critici per lo scaling:</p>
+
+<div class="warning">
+<strong>Colli di bottiglia identificati:</strong>
+<ul>
+<li><strong>Processing AI:</strong> Analisi bandi è CPU/GPU intensive. Un singolo bando può richiedere 30-120s di elaborazione</li>
+<li><strong>Database queries:</strong> PostgreSQL su Supabase con query complesse su migliaia di bandi rallenta oltre 10k record</li>
+<li><strong>Railway limits:</strong> Memory caps (512MB-8GB) e cold starts impattano performance</li>
+<li><strong>Make automation:</strong> 1000 operations/mese nel free tier, rate limits su webhook</li>
+<li><strong>Concurrent users:</strong> Express single-threaded, Lovable frontend non ottimizzato per caching</li>
+</ul>
+</div>
+
+<h2>Architettura Attuale vs Target</h2>
+<p><strong>Attuale:</strong> Monolite Express → Supabase → AI processing sincrono</p>
+<p><strong>Target 1000+ utenti:</strong> Microservizi asincroni + caching + queue system</p>
+
+<h2>Soluzioni di Scaling</h2>
+
+<div class="solution">
+<h3>1. Database Optimization (Immediate - Low Cost)</h3>
+<ul>
+<li><strong>Indexing strategico:</strong> <code>CREATE INDEX idx_bandi_deadline ON bandi(scadenza) WHERE stato='aperto';</code></li>
+<li><strong>Materialized views:</strong> Pre-calcolare statistiche comuni</li>
+<li><strong>Partitioning:</strong> Partizionare tabella bandi per regione/data</li>
+<li><strong>Connection pooling:</strong> PgBouncer per gestire connessioni</li>
+<li><strong>Read replicas:</strong> Supabase Pro offre replica read-only</li>
+</ul>
+<p><strong>Costo:</strong> €25/mese (Supabase Pro) | <strong>Gain:</strong> 3-5x query speed</p>
+</div>
+
+<div class="solution">
+<h3>2. Async Processing Queue (Critical)</h3>
+<p>Separare analisi AI dal request/response cycle:</p>
+<ul>
+<li><strong>BullMQ + Redis:</strong> Queue system per job AI processing</li>
+<li><strong>Worker pools:</strong> Scalare workers indipendentemente da API</li>
+<li><strong>Priority queue:</strong> Bandi urgenti (scadenza <7gg) in fast lane</li>
+</ul>
+<pre><code>// Esempio architettura
+POST /bandi/analyze → Job in queue → 202 Accepted
+Workers (3-10) → Process in parallel → Webhook callback
+GET /bandi/:id/status → Real-time progress
+</code></pre>
+<p><strong>Stack:</strong> Railway Redis + BullMQ | <strong>Costo:</strong> €10-30/mese</p>
+</div>
+
+<div class="solution">
+<h3>3. Caching Strategy (High Impact)</h3>
+<ul>
+<li><strong>Redis cache:</strong> Risultati analisi bandi (TTL 24h)</li>
+<li><strong>CDN:</strong> Vercel Edge per frontend Lovable → Cloudflare</li>
+<li><strong>API caching:</strong> HTTP cache headers su endpoint read-only</li>
+<li><strong>Computed fields:</strong> Cache score compliance in DB</li>
+</ul>
+<p><strong>Hit rate target:</strong> 70%+ su query ripetute | <strong>Latency:</strong> 50ms vs 2000ms</p>
+</div>
+
+<div class="solution">
+<h3>4. AI Processing Optimization</h3>
+<ul>
+<li><strong>Batch processing:</strong> Analizzare 10 bandi in parallelo invece di sequenziale</li>
+<li><strong>Model caching:</strong> Riutilizzare embeddings per bandi simili</li>
+<li><strong>Streaming responses:</strong> SSE per feedback real-time durante analisi</li>
+<li><strong>Fallback models:</strong> GPT-3.5 per analisi veloci, GPT-4 solo se necessario</li>
+</ul>
+<p><strong>Costo AI:</strong> Attuale $0.50/bando → Target $0.15/bando</p>
+</div>
+
+<div class="solution">
+<h3>5. Infrastructure Scaling (Railway → Hybrid)</h3>
+<p><strong>Opzione A - Railway Pro:</strong></p>
+<ul>
+<li>Scalare a 2-4 instances Express</li>
+<li>Load balancer automatico</li>
+<li>Costo: €50-100/mese per 1000 utenti</li>
+</ul>
+<p><strong>Opzione B - Hybrid (Raccomandato):</strong></p>
+<ul>
+<li><strong>Frontend:</strong> Lovable → Vercel (gratis fino 100GB bandwidth)</li>
+<li><strong>API:</strong> Railway Express (2 instances)</li>
+<li><strong>Workers AI:</strong> Modal Labs o Replicate (pay-per-use GPU)</li>
+<li><strong>DB:</strong> Supabase Pro con replicas</li>
+</ul>
+<p><strong>Costo totale:</strong> €80-150/mese | <strong>Capacity:</strong> 5000+ utenti</p>
+</div>
+
+<h2>Monitoring & Observability</h2>
+<ul>
+<li><strong>Sentry:</strong> Error tracking (free tier 5k events/mese)</li>
+<li><strong>Supabase Dashboard:</strong> DB performance metrics</li>
+<li><strong>Railway Metrics:</strong> CPU/Memory/Response times</li>
+<li><strong>Custom dashboards:</strong> Grafana + Prometheus per metriche business (bandi analizzati/ora, queue depth, cache hit rate)</li>
+</ul>
+
+<h2>Migration Path (4 settimane)</h2>
+<p><strong>Week 1:</strong> DB optimization + indexing</p>
+<p><strong>Week 2:</strong> Implementare Redis + BullMQ queue</p>
+<p><strong>Week 3:</strong> Refactor AI processing → async workers</p>
+<p><strong>Week 4:</strong> Load testing + monitoring setup</p>
+
+<h2>Risorse Tecniche</h2>
+<ul>
+<li><a href="https://github.com/OptimalBits/bull">BullMQ Queue System</a> - Redis-based queue per Node.js</li>
+<li><a href="https://supabase.com/docs/guides/platform/performance">Supabase Performance Guide</a> - DB optimization best practices</li>
+<li><a href="https://railway.app/docs/reference/scaling">Railway Scaling Docs</a> - Horizontal scaling configuration</li>
+<li><a href="https://vercel.com/docs/edge-network/caching">Vercel Edge Caching</a> - CDN setup per frontend</li>
+<li><a href="https://modal.com/">Modal Labs</a> - Serverless GPU per AI workloads</li>
+</ul>
+
+<h2>Load Testing Strategy</h2>
+<pre><code>// k6 script esempio
+import http from 'k6/http';
+export let options = {
+  stages: [
+    { duration: '2m', target: 100 }, // ramp-up
+    { duration: '5m', target: 500 }, // sustained load
+    { duration: '2m', target: 0 },   // ramp-down
+  ],
+};
+export default function() {
+  http.get('https://tendermatch.app/api/bandi');
+}
+</code></pre>
+
+<h2>Prossimi Step per Ambra</h2>
+<ol>
+<li><strong>Audit attuale:</strong> Analizzare Railway metrics ultimi 30gg - identificare peak usage patterns</li>
+<li><strong>DB profiling:</strong> Eseguire <code>EXPLAIN ANALYZE</code> su query più lente, aggiungere indici</li>
+<li><strong>Prototipo queue:</strong> Implementare BullMQ per 1 endpoint (/analyze) come POC</li>
+<li><strong>Cost modeling:</strong> Calcolare TCO per 1k, 5k, 10k utenti con architettura proposta</li>
+<li><strong>Load test baseline:</strong> k6 test con 100 concurrent users → misurare limiti attuali</li>
+<li><strong>Decision point:</strong> Railway scaling vs hybrid architecture - valutare con metriche reali</li>
+</ol>
+
+<div class="warning">
+<strong>Red flags da monitorare:</strong>
+<ul>
+<li>Response time API >2s in p95</li>
+<li>DB connection pool saturation (>80% used)</li>
+<li>Railway memory >75% sustained</li>
+<li>Make.com operations >800/mese (vicino al limite)</li>
+<li>AI costs >30% revenue per utente</li>
+</ul>
+</div>
+
+<p class="meta">Documento generato da Freedom R&D autonomamente basandosi su pattern di scaling per AI-powered SaaS B2B</p>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
