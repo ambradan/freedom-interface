@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: Euryst - WhatsApp API limits</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; border-radius: 3px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #331a00; border-left: 3px solid #ff6600; padding: 10px; margin: 20px 0; }
+.solution { background: #1a2a1a; border-left: 3px solid #0f0; padding: 10px; margin: 20px 0; }
+ul { line-height: 1.8; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #34 | 2026-02-24 06:00</p>
+<h1>Euryst: WhatsApp API limits</h1>
+
+<h2>Il Problema</h2>
+<p>Euryst è un AI agent che vive su WhatsApp come layer cognitivo persistente per founder. Il problema dei limiti API di WhatsApp è critico perché:</p>
+
+<ul>
+<li><strong>Rate limits stringenti</strong>: WhatsApp Business API impone limiti sul numero di messaggi che possono essere inviati in un determinato periodo</li>
+<li><strong>Messaging tiers</strong>: Il sistema di tier (1K, 10K, 100K, unlimited) si sblocca gradualmente in base alla qualità delle conversazioni</li>
+<li><strong>Template message restrictions</strong>: I messaggi proattivi richiedono template pre-approvati</li>
+<li><strong>24h session window</strong>: Dopo 24h dall'ultimo messaggio dell'utente, serve un template per ricontattarlo</li>
+<li><strong>Quality rating</strong>: Meta monitora la qualità (green/yellow/red) e può limitare o bannare l'account</li>
+</ul>
+
+<div class="warning">
+<strong>⚠️ Rischio critico</strong>: Per un AI agent conversazionale che deve essere "sempre disponibile", questi limiti possono rompere l'esperienza utente e la value proposition di Euryst.
+</div>
+
+<h2>Approcci Comuni</h2>
+
+<h3>1. Tier Management Strategy</h3>
+<p>Gestire attivamente la progressione attraverso i tier:</p>
+<ul>
+<li>Iniziare con conversazioni di alta qualità per sbloccare tier superiori velocemente</li>
+<li>Monitorare il quality rating costantemente</li>
+<li>Evitare spam o messaggi non richiesti</li>
+<li>Implementare feedback loops per migliorare le risposte</li>
+</ul>
+
+<h3>2. Session Window Optimization</h3>
+<div class="solution">
+<strong>✓ Soluzione tecnica</strong>:
+<ul>
+<li>Tracciare timestamp dell'ultimo messaggio utente</li>
+<li>Inviare messaggi "keepalive" intelligenti prima dello scadere delle 24h</li>
+<li>Usare template messages strategicamente per sessioni scadute</li>
+<li>Preparare template library per diversi use case</li>
+</ul>
+</div>
+
+<h3>3. Message Batching & Prioritization</h3>
+<p>Per un AI agent che potrebbe generare molte risposte:</p>
+<ul>
+<li><strong>Chunking intelligente</strong>: Aggregare informazioni in messaggi più densi invece di tanti piccoli messaggi</li>
+<li><strong>Priority queue</strong>: Messaggi critici vs informativi</li>
+<li><strong>Async processing</strong>: Non tutto deve essere real-time</li>
+<li><strong>User-initiated bias</strong>: Preferire risposte a domande dirette vs messaggi proattivi</li>
+</ul>
+
+<h3>4. Hybrid Architecture</h3>
+<div class="solution">
+<strong>✓ Architettura consigliata per Euryst</strong>:
+<ul>
+<li><strong>WhatsApp come interfaccia principale</strong> per conversazioni real-time</li>
+<li><strong>Web dashboard complementare</strong> per contenuti long-form, analytics, configurazioni</li>
+<li><strong>Email digest</strong> per riepiloghi settimanali o notifiche non urgenti</li>
+<li><strong>Deep linking</strong>: Da WhatsApp al web per contenuti ricchi senza consumare messaggi</li>
+</ul>
+</div>
+
+<h3>5. Template Strategy</h3>
+<p>Creare una libreria di template ben progettati:</p>
+<ul>
+<li><strong>Check-in templates</strong>: "Come sta andando il progetto X?"</li>
+<li><strong>Reminder templates</strong>: "Hai una deadline tra 2 giorni"</li>
+<li><strong>Insight templates</strong>: "Ho notato un pattern nei tuoi dati"</li>
+<li><strong>Re-engagement templates</strong>: Per sessioni scadute</li>
+</ul>
+
+<h2>Risorse Tecniche</h2>
+
+<h3>WhatsApp Business Platform</h3>
+<ul>
+<li><a href="https://developers.facebook.com/docs/whatsapp/cloud-api/overview" target="_blank">WhatsApp Cloud API Documentation</a></li>
+<li><a href="https://developers.facebook.com/docs/whatsapp/cloud-api/rate-limits" target="_blank">Rate Limits & Throughput</a></li>
+<li><a href="https://developers.facebook.com/docs/whatsapp/cloud-api/phone-numbers#quality-rating" target="_blank">Quality Rating System</a></li>
+<li><a href="https://developers.facebook.com/docs/whatsapp/cloud-api/messages/message-templates" target="_blank">Message Templates Guide</a></li>
+</ul>
+
+<h3>Provider Alternativi</h3>
+<ul>
+<li><strong>Twilio</strong>: Wrapper sopra WhatsApp Business API con tools aggiuntivi</li>
+<li><strong>MessageBird</strong>: Multi-channel messaging con WhatsApp support</li>
+<li><strong>360dialog</strong>: WhatsApp Business Solution Provider specializzato</li>
+<li><strong>Infobip</strong>: Enterprise-grade messaging platform</li>
+</ul>
+
+<h3>Monitoring & Analytics</h3>
+<ul>
+<li>Implementare dashboard per tracciare: message count, tier status, quality rating, session windows attive</li>
+<li>Alert system per approaching limits</li>
+<li>A/B testing su template messages</li>
+</ul>
+
+<h2>Architettura Specifica per Euryst</h2>
+
+<h3>Layer 1: Message Router</h3>
+<code>
+- Incoming message → immediate acknowledgment<br>
+- Queue processing con priority<br>
+- Rate limit aware scheduling
+</code>
+
+<h3>Layer 2: Cognitive Engine</h3>
+<code>
+- Context retrieval da memoria persistente<br>
+- Response generation (può essere async)<br>
+- Decide: send now, batch, defer, o redirect to web
+</code>
+
+<h3>Layer 3: Delivery Manager</h3>
+<code>
+- Traccia session windows<br>
+- Gestisce template fallback<br>
+- Monitora quality metrics<br>
+- Adaptive throttling
+</code>
+
+<h2>Prossimi Step per Ambra</h2>
+
+<div class="solution">
+<h3>Immediate (Questa settimana)</h3>
+<ol>
+<li><strong>Audit attuale setup</strong>: Che tier siamo? Qual è il quality rating? Quanti messaggi/giorno stiamo inviando?</li>
+<li><strong>Implementare tracking</strong>: Dashboard minimale per monitorare limiti in real-time</li>
+<li><strong>Session window management</strong>: Sistema per tracciare e gestire le 24h windows</li>
+</ol>
+
+<h3>Short-term (Prossime 2 settimane)</h3>
+<ol>
+<li><strong>Template library</strong>: Creare e far approvare 5-10 template essenziali</li>
+<li><strong>Message prioritization</strong>: Implementare queue system con priorità</li>
+<li><strong>Chunking logic</strong>: Aggregare risposte multiple in messaggi più densi</li>
+<li><strong>Fallback strategy</strong>: Cosa succede quando hit limits? Email? Web notification?</li>
+</ol>
+
+<h3>Medium-term (Prossimo mese)</h3>
+<ol>
+<li><strong>Hybrid interface</strong>: Prototipo di web dashboard complementare</li>
+<li><strong>Quality optimization</strong>: Sistema per massimizzare quality rating e sbloccare tier superiori</li>
+<li><strong>Analytics pipeline</strong>: Capire pattern di utilizzo per ottimizzare message budget</li>
+<li><strong>User education</strong>: Comunicare ai founder i limiti e come massimizzare il valore</li>
+</ol>
+
+<h3>Strategic Questions</h3>
+<ul>
+<li>Quanti messaggi al giorno servono VERAMENTE per essere utili a un founder?</li>
+<li>Quali interazioni possono essere async vs real-time?</li>
+<li>Come bilanciare "always available" con "respectful of attention"?</li>
+<li>Il costo di WhatsApp Business API scala bene con il business model?</li>
+</ul>
+</div>
+
+<h2>Considerazioni Finali</h2>
+
+<p>I limiti di WhatsApp API non sono un bug, sono una feature. Forzano a progettare interazioni di qualità. Per Euryst, questo significa:</p>
+
+<ul>
+<li><strong>Qualità > Quantità</strong>: Ogni messaggio deve portare valore</li>
+<li><strong>Context-aware</strong>: Usare la memoria persistente per evitare messaggi ridondanti</li>
+<li><strong>User-initiated bias</strong>: Lasciare che sia il founder a guidare la frequenza</li>
+<li><strong>Multi-channel thinking</strong>: WhatsApp è l'interfaccia, non l'unico touchpoint</li>
+</ul>
+
+<p>Il vincolo diventa opportunità: costruire un AI agent che rispetta il tempo e l'attenzione del founder, non uno che spamma.</p>
+
+<p class="meta">Next R&D iteration: memory persistence strategies per Euryst</p>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>

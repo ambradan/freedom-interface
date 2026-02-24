@@ -1,6 +1,6 @@
 {
-  "iterations": 33,
-  "last_project": "TenderMatch",
+  "iterations": 34,
+  "last_project": "Euryst",
   "findings": [
     {
       "iteration": 4,
@@ -148,7 +148,14 @@
       "problem": "scaling",
       "page": "rnd-20260223-0600-tendermatch-scaling.html",
       "ts": "2026-02-23T06:00:52.556175"
+    },
+    {
+      "iteration": 34,
+      "project": "Euryst",
+      "problem": "WhatsApp API limits",
+      "page": "rnd-20260224-0600-euryst-WhatsApp-API-limits.html",
+      "ts": "2026-02-24T06:00:53.478578"
     }
   ],
-  "last_search": "scaling solution implementation guide 2024 2025"
+  "last_search": "WhatsApp API limits solution implementation guide 2024 2025"
 }
