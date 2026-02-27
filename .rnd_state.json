@@ -1,6 +1,6 @@
 {
-  "iterations": 35,
-  "last_project": "TechPulse",
+  "iterations": 36,
+  "last_project": "Euryst",
   "findings": [
     {
       "iteration": 4,
@@ -162,7 +162,14 @@
       "problem": "monetization",
       "page": "rnd-20260226-0601-techpulse-monetization.html",
       "ts": "2026-02-26T06:01:11.245285"
+    },
+    {
+      "iteration": 36,
+      "project": "Euryst",
+      "problem": "WhatsApp API limits",
+      "page": "rnd-20260227-0601-euryst-WhatsApp-API-limits.html",
+      "ts": "2026-02-27T06:01:52.079206"
     }
   ],
-  "last_search": "monetization solution implementation guide 2024 2025"
+  "last_search": "WhatsApp API limits solution implementation guide 2024 2025"
 }

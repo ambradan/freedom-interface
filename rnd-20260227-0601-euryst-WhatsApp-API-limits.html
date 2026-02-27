@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: Euryst - WhatsApp API limits</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; line-height: 1.6; }
+h1 { color: #0f0; border-bottom: 2px solid #0f0; padding-bottom: 10px; }
+h2 { color: #0a0; margin-top: 30px; }
+h3 { color: #0d0; margin-top: 20px; }
+a { color: #0f0; text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { background: #222; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; }
+.meta { color: #666; font-size: 0.9em; margin-bottom: 30px; }
+.warning { background: #331100; border-left: 4px solid #ff6600; padding: 15px; margin: 20px 0; }
+.info { background: #001133; border-left: 4px solid #0099ff; padding: 15px; margin: 20px 0; }
+.success { background: #113300; border-left: 4px solid #00ff00; padding: 15px; margin: 20px 0; }
+ul, ol { margin: 15px 0; padding-left: 30px; }
+li { margin: 8px 0; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+th, td { border: 1px solid #333; padding: 10px; text-align: left; }
+th { background: #222; color: #0f0; }
+.architecture { background: #1a1a1a; padding: 15px; margin: 20px 0; border-radius: 5px; font-family: monospace; font-size: 0.9em; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #36 | 2026-02-27 06:00 | Project: Euryst</p>
+
+<h1>Euryst: WhatsApp API Limits Deep Dive</h1>
+
+<div class="info">
+<strong>📋 Context Refresh</strong><br>
+Euryst è un AI agent che vive su WhatsApp come layer cognitivo persistente per founder. Il problema dei limiti API è critico perché può rompere l'esperienza conversazionale che è il core value del prodotto.
+</div>
+
+<h2>🔍 Il Problema in Dettaglio</h2>
+
+<p>WhatsApp Business API impone limiti stringenti che impattano direttamente su Euryst:</p>
+
+<h3>1. Tier System & Rate Limits</h3>
+<table>
+<tr>
+<th>Tier</th>
+<th>Messaggi/24h</th>
+<th>Come Sbloccare</th>
+<th>Tempo Tipico</th>
+</tr>
+<tr>
+<td>Tier 1</td>
+<td>1,000</td>
+<td>Automatico (nuovo account)</td>
+<td>Immediato</td>
+</tr>
+<tr>
+<td>Tier 2</td>
+<td>10,000</td>
+<td>Quality rating + volume</td>
+<td>~7 giorni</td>
+</tr>
+<tr>
+<td>Tier 3</td>
+<td>100,000</td>
+<td>Quality rating + volume</td>
+<td>~30 giorni</td>
+</tr>
+<tr>
+<td>Unlimited</td>
+<td>No limit</td>
+<td>Quality rating + volume</td>
+<td>~90 giorni</td>
+</tr>
+</table>
+
+<div class="warning">
+<strong>⚠️ Rischio Critico per Euryst</strong><br>
+Con Tier 1 (1K msg/day), se Euryst ha 50 utenti attivi, sono solo 20 messaggi per utente al giorno. Per un "layer cognitivo persistente", questo è molto limitante.
+</div>
+
+<h3>2. Quality Rating System</h3>
+<p>Meta assegna un quality rating che influenza tutto:</p>
+<ul>
+<li><strong style="color: #00ff00;">GREEN</strong>: High quality - nessuna limitazione</li>
+<li><strong style="color: #ffff00;">YELLOW</strong>: Medium quality - possibili limitazioni</li>
+<li><strong style="color: #ff0000;">RED</strong>: Low quality - severe limits o ban</li>
+</ul>
+
+<p><strong>Fattori che influenzano il rating:</strong></p>
+<ul>
+<li>User blocks (utenti che bloccano il numero)</li>
+<li>Reports (segnalazioni spam)</li>
+<li>Message delivery failures</li>
+<li>User engagement rate</li>
+<li>Response time to user messages</li>
+</ul>
+
+<h3>3. Session Window (24h Rule)</h3>
+<div class="architecture">
+User sends message → Session OPEN (24h)
+├─ Durante le 24h: free-form messages OK
+└─ Dopo 24h: SOLO template messages (pre-approved)
+
+Template approval time: 1-48 hours
+Template rejection rate: ~30% (first submission)
+</div>
+
+<div class="warning">
+<strong>⚠️ Problema per Euryst</strong><br>
+Se un founder non scrive per 24h, Euryst non può fare check-in proattivi senza template. Ma i template sono rigidi e vanno contro l'idea di "conversazione naturale".
+</div>
+
+<h3>4. Template Message Constraints</h3>
+<ul>
+<li>Devono essere pre-approvati da Meta (1-48h review)</li>
+<li>Formato rigido con placeholder limitati</li>
+<li>Categorie limitate (marketing, utility, authentication)</li>
+<li>No personalizzazione dinamica complessa</li>
+<li>Rate limits separati per template</li>
+</ul>
+
+<h3>5. Throughput Limits</h3>
+<p>Oltre ai daily limits, ci sono anche:</p>
+<ul>
+<li><strong>80 msg/second</strong> per phone number (burst)</li>
+<li><strong>Concurrent connections</strong>: limitate per tier</li>
+<li><strong>Media upload limits</strong>: 5MB per file, formati specifici</li>
+</ul>
+
+<h2>💡 Approcci Strategici per Euryst</h2>
+
+<h3>Approccio 1: Smart Message Budgeting</h3>
+<div class="success">
+<strong>✓ Implementazione Consigliata</strong>
+<div class="architecture">
+1. Calcola budget giornaliero per utente
+   daily_budget = (tier_limit * 0.8) / active_users
+   
+2. Prioritizza messaggi:
+   - P0: Risposte a domande dirette (always send)
+   - P1: Notifiche critiche (deadline, alert)
+   - P2: Check-in proattivi (se budget disponibile)
+   - P3: Insights/suggestions (best effort)
+
+3. Batch & aggregate quando possibile:
+   Instead of: "Task A done" + "Task B done" + "Task C done"
+   Send: "✅ 3 tasks completed: A, B, C"
+</div>
+</div>
+
+<h3>Approccio 2: Hybrid Interface Architecture</h3>
+<p><strong>WhatsApp come "control center", non unico touchpoint</strong></p>
+
+<div class="architecture">
+Euryst Architecture:
+├─ WhatsApp (conversational interface)
+│  ├─ Quick interactions
+│  ├─ Time-sensitive alerts
+│  └─ Voice/text input
+│
+├─ Web Dashboard (deep work interface)
+│  ├─ Analytics & reports
+│  ├─ Long-form content
+│  ├─ Configuration
+│  └─ History search
+│
+├─ Email Digest (async updates)
+│  ├─ Weekly summaries
+│  ├─ Non-urgent insights
+│  └─ Deep-dive reports
+│
+└─ Push Notifications (mobile app future)
+   └─ Critical alerts only
+</div>
+
+<p><strong>Vantaggi per Euryst:</strong></p>
+<ul>
+<li>Riduce pressione su WhatsApp API limits</li>
+<li>Offre interfacce ottimizzate per diversi use case</li>
+<li>Mantiene WhatsApp per ciò che fa meglio: conversazione veloce</li>
+<li>Permette contenuti ricchi (grafici, tabelle) sul web</li>
+</ul>
+
+<h3>Approccio 3: Session Window Management Intelligente</h3>
+<div class="success">
+<strong>✓ Tactical Solution</strong>
+<div class="architecture">
+# Pseudo-code per session management
+
+class SessionManager:
+    def __init__(self):
+        self.sessions = {}  # user_id -> last_message_time
+    
+    def should_send_message(self, user_id, priority):
+        session = self.sessions.get(user_id)
+        time_since_last = now() - session.last_user_message
+        
+        if time_since_last < 23.5h:
+            return True  # Within session window
+        
+        if priority == "P0":
+            # Use template message
+            return self.send_template(user_id, "check_in_template")
+        
+        if time_since_last < 48h:
+            # Wait for user to re-engage
+            return False
+        
+        # Session too old, use re-engagement template
+        return self.send_template(user_id, "reengage_template")
+    
+    def optimize_keepalive(self, user_id):
+        """Send smart keepalive before 24h expires"""
+        if time_until_expiry < 1h and has_pending_insights:
+            send_message("Quick update: [insight]. Anything you need?")
+</div>
+</div>
+
+<h3>Approccio 4: Template Library Strategy</h3>
+<p><strong>Creare template versatili e pre-approvarli</strong></p>
+
+<table>
+<tr>
+<th>Template Name</th>
+<th>Use Case</th>
+<th>Variabili</th>
+</tr>
+<tr>
+<td>daily_checkin</td>
+<td>Check-in proattivo</td>
+<td>{{founder_name}}, {{focus_area}}</td>
+</tr>
+<tr>
+<td>deadline_reminder</td>
+<td>Alert deadline</td>
+<td>{{task_name}}, {{hours_left}}</td>
+</tr>
+<tr>
+<td>insight_ready</td>
+<td>Notifica insight</td>
+<td>{{insight_type}}, {{metric}}</td>
+</tr>
+<tr>
+<td>reengage</td>
+<td>Riattivazione utente</td>
+<td>{{days_inactive}}, {{last_topic}}</td>
+</tr>
+<tr>
+<td>weekly_summary</td>
+<td>Recap settimanale</td>
+<td>{{week_number}}, {{key_metric}}</td>
+</tr>
+</table>
+
+<div class="info">
+<strong>💡 Pro Tip</strong><br>
+Scrivere template "conversazionali" ma che coprano range ampi di situazioni. Usare variabili per personalizzare senza perdere l'approval.
+</div>
+
+<h3>Approccio 5: Multi-Number Architecture (Advanced)</h3>
+<p>Per scale maggiore:</p>
+<ul>
+<li>Pool di numeri WhatsApp Business</li>
+<li>Load balancing intelligente tra numeri</li>
+<li>Ogni numero gestisce subset di utenti</li>
+<li>Fallback automatico se un numero raggiunge limits</li>
+</ul>
+
+<div class="warning">
+<strong>⚠️ Tradeoff</strong><br>
+Più complesso da gestire, costi maggiori, ma necessario per scale 1000+ utenti attivi.
+</div>
+
+<h2>🛠️ Stack Tecnico Consigliato</h2>
+
+<h3>Core Components</h3>
+<div class="architecture">
+┌─ WhatsApp Business API Layer
+│  ├─ Provider: 360dialog o Twilio
+│  ├─ Webhook handler (FastAPI/Express)
+│  └─ Rate limiter middleware
+│
+├─ Message Queue (Redis/RabbitMQ)
+│  ├─ Priority queue per messaggi
+│  ├─ Retry logic con backoff
+│  └─ Dead letter queue
+│
+├─ Session Manager (PostgreSQL + Redis)
+│  ├─ Track session windows
+│  ├─ User activity timestamps
+│  └─ Message budget tracking
+│
+├─ Template Manager
+│  ├─ Template storage & versioning
+│  ├─ Approval status tracking
+│  └─ Dynamic variable injection
+│
+└─ Monitoring & Analytics
+   ├─ Quality rating tracker
+   ├─ Tier progression monitor
+   ├─ Usage analytics per user
+   └─ Alert system per approaching limits
+</div>
+
+<h3>Implementazione Message Prioritization</h3>
+<div class="architecture">
+# Python example con Redis
+
+import redis
+from enum import Enum
+
+class Priority(Enum):
+    P0_CRITICAL = 0
+    P1_HIGH = 1
+    P2_MEDIUM = 2
+    P3_LOW = 3
+
+class EurystMessageQueue:
+    def __init__(self):
+        self.redis = redis.Redis()
+        self.daily_limit = 1000  # Start with Tier 1
+        
+    def can_send_message(self, user_id, priority):
+        today = datetime.now().date()
+        key = f"msg_count:{today}"
+        current_count = self.redis.get(key) or 0
+        
+        # Reserve 20% budget for P0 messages
+        if priority == Priority.P0_CRITICAL:
+            return current_count < self.daily_limit
+        
+        # P1-P3 share remaining 80%
+        return current_count < (self.daily_limit * 0.8)
+    
+    def enqueue_message(self, user_id, content, priority):
+        if not self.can_send_message(user_id, priority):
+            if priority.value <= Priority.P1_HIGH.value:
+                # Queue for next day
+                self.redis.lpush(f"queue:tomorrow", {
+                    'user_id': user_id,
+                    'content': content,
+                    'priority': priority.value
+                })
+            return False
+        
+        # Send immediately
+        self.send_whatsapp_message(user_id, content)
+        self.redis.incr(f"msg_count:{datetime.now().date()}")
+        return True
+</div>
+
+<h2>📚 Risorse Tecniche</h2>
+
+<h3>Documentazione Ufficiale</h3>
+<ul>
+<li><a href="https://developers.facebook.com/docs/whatsapp/cloud-api" target="_blank">WhatsApp Cloud API Docs</a></li>
+<li><a href="https://developers.facebook.com/docs/whatsapp/cloud-api/rate-limits" target="_blank">Rate Limits & Throughput Guide</a></li>
+<li><a href="https://developers.facebook.com/docs/whatsapp/cloud-api/phone-numbers/quality-rating" target="_blank">Quality Rating System</a></li>
+<li><a href="https://developers.facebook.com/docs/whatsapp/cloud-api/messages/message-templates" target="_blank">Message Templates Documentation</a></li>
+</ul>
+
+<h3>WhatsApp Business Solution Providers</h3>
+<ul>
+<li><strong>360dialog</strong> - Specializzato WhatsApp BSP, buon supporto</li>
+<li><strong>Twilio</strong> - Robusto, multi-channel, pricing trasparente</li>
+<li><strong>MessageBird</strong> - Good developer experience, global coverage</li>
+<li><strong>Infobip</strong> - Enterprise-grade, high volume</li>
+</ul>
+
+<h3>Tools & Libraries</h3>
+<ul>
+<li><code>whatsapp-web.js</code> - Node.js library (unofficial, no Business API)</li>
+<li><code>twilio-python</code> - Official Twilio SDK</li>
+<li><code>fastapi-limiter</code> - Rate limiting per FastAPI</li>
+<li><code>celery</code> - Distributed task queue per message scheduling</li>
+</ul>
+
+<h2>🎯 Action Plan per Ambra</h2>
+
+<h3>Week 1: Assessment & Foundation</h3>
+<div class="success">
+<strong>✓ Immediate Actions</strong>
+<ol>
+<li><strong>Audit Current State</strong>
+   <ul>
+   <li>Quale tier siamo? (check Meta Business Manager)</li>
+   <li>Quality rating attuale?</li>
+   <li>Quanti messaggi/giorno stiamo inviando?</li>
+   <li>Quanti utenti attivi?</li>
+   </ul>
+</li>
+<li><strong>Implement Basic Monitoring</strong>
+   <ul>
+   <li>Dashboard per tracciare daily message count</li>
+   <li>Alert quando raggiungiamo 80% del limit</li>
+   <li>Track session windows per user</li>
+   </ul>
+</li>
+<li><strong>Message Categorization</strong>
+   <ul>
+   <li>Analizzare messaggi attuali e classificarli (P0-P3)</li>
+   <li>Identificare quali possono essere batched</li>
+   <li>Quali possono essere spostati su altri canali</li>
+   </ul>
+</li>
+</ol>
+</div>
+
+<h3>Week 2-3: Smart Queuing Implementation</h3>
+<ol>
+<li><strong>Priority Queue System</strong>
+   <ul>
+   <li>Implementare message queue con Redis</li>
+   <li>Logic per priority-based sending</li>
+   <li>Retry mechanism con exponential backoff</li>
+   </ul>
+</li>
+<li><strong>Session Window Manager</strong>
+   <ul>
+   <li>Track last user message timestamp</li>
+   <li>Smart keepalive logic (23h mark)</li>
+   <li>Template fallback quando session expired</li>
+   </ul>
+</li>
+<li><strong>Budget Allocator</strong>
+   <ul>
+   <li>Dynamic per-user budget calculation</li>
+   <li>Reserve capacity per P0 messages</li>
+   <li>Rollover logic per unused budget</li>
+   </ul>
+</li>
+</ol>
+
+<h3>Week 4: Template Strategy</h3>
+<ol>
+<li><strong>Template Design</strong>
+   <ul>
+   <li>Creare 5-7 template essenziali</li>
+   <li>Scrivere copy conversazionale ma compliant</li>
+   <li>Definire variabili dinamiche</li>
+   </ul>
+</li>
+<li><strong>Submit for Approval</strong>
+   <ul>
+   <li>Submit via Meta Business Manager</li>
+   <li>Prepare for iterations (rejection common)</li>
+   <li>Document approval status</li>
+   </ul>
+</li>
+<li><strong>Template Delivery System</strong>
+   <ul>
+   <li>Logic per scegliere template giusto</li>
+   <li>Variable injection pipeline</li>
+   <li>A/B testing framework</li>
+   </ul>
+</li>
+</ol>
+
+<h3>Month 2: Hybrid Architecture</h3>
+<ol>
+<li><strong>Web Dashboard MVP</strong>
+   <ul>
+   <li>Analytics view per founder</li>
+   <li>Long-form insights che non stanno su WhatsApp</li>
+   <li>Deep linking da WhatsApp message</li>
+   </ul>
+</li>
+<li><strong>Email Digest System</strong>
+   <ul>
+   <li>Weekly summary template</li>
+   <li>Non-urgent insights</li>
+   <li>Link back to WhatsApp per quick reply</li>
+   </ul>
+</li>
+<li><strong>Channel Router</strong>
+   <ul>
+   <li>Logic per decidere: WhatsApp vs Email vs Web</li>
+   <li>User preferences system</li>
+   <li>Fallback chain se un canale fails</li>
+   </ul>
+</li>
+</ol>
+
+<h3>Month 3: Optimization & Scale</h3>
+<ol>
+<li><strong>Quality Rating Optimization</strong>
+   <ul>
+   <li>Analyze user engagement patterns</li>
+   <li>Optimize message timing</li>
+   <li>Reduce low-engagement messages</li>
+   <li>Implement feedback loops</li>
+   </ul>
+</li>
+<li><strong>Tier Progression Strategy</strong>
+   <ul>
+   <li>Focus on quality interactions per sbloccare Tier 2</li>
+   <li>Onboard new users gradually</li>
+   <li>Monitor progression metrics</li>
+   </ul>
+</li>
+<li><strong>Advanced Features</strong>
+   <ul>
+   <li>Message batching intelligente</li>
+   <li>Predictive send timing</li>
+   <li>User activity modeling</li>
+   </ul>
+</li>
+</ol>
+
+<h2>🤔 Strategic Questions per Ambra</h2>
+
+<div class="info">
+<strong>Questions to Answer:</strong>
+<ol>
+<li><strong>User Behavior</strong>: Quanti messaggi al giorno servono VERAMENTE per essere utili? Qual è il minimum viable frequency?</li>
+<li><strong>Value Proposition</strong>: "Layer cognitivo persistente" richiede necessariamente WhatsApp 24/7? O può essere "always available when you need" con hybrid approach?</li>
+<li><strong>Business Model</strong>: I costi di WhatsApp Business API (€0.005-0.05/msg) scalano con il pricing di Euryst? Serve tier premium per heavy users?</li>
+<li><strong>Differentiation</strong>: Come trasformare il vincolo API in feature? Es: "Rispettiamo il tuo tempo, messaggi solo quando conta"</li>
+<li><strong>User Education</strong>: Come comunicare i limiti senza rompere la magia? Transparency vs seamless experience?</li>
+</ol>
+</div>
+
+<h2>📊 Success Metrics</h2>
+
+<p><strong>Track these KPIs:</strong></p>
+<ul>
+<li><strong>Quality Rating</strong>: Mantenere GREEN sempre</li>
+<li><strong>Tier Progression</strong>: Sbloccare Tier 2 entro 30 giorni</li>
+<li><strong>Message Efficiency</strong>: Avg messages/user/day vs value delivered</li>
+<li><strong>Session Window Utilization</strong>: % messaggi inviati within session vs template</li>
+<li><strong>User Engagement</strong>: Response rate, time to respond</li>
+<li><strong>Cost per Active User</strong>: WhatsApp API costs / MAU</li>
+<li><strong>Channel Mix</strong>: WhatsApp vs Web vs Email interaction ratio</li>
+</ul>
+
+<h2>🚀 Conclusioni</h2>
+
+<p>I limiti di WhatsApp API sono reali e stringenti, ma non sono un blocco per Euryst. Sono un <strong>design constraint che forza qualità</strong>.</p>
+
+<div class="success">
+<strong>✓ Key Takeaways</strong>
+<ul>
+<li><strong>Quality over Quantity</strong>: Ogni messaggio deve portare valore reale</li>
+<li><strong>Hybrid by Design</strong>: WhatsApp è il control center, non l'unico touchpoint</li>
+<li><strong>Smart Prioritization</strong>: Non tutti i messaggi sono uguali</li>
+<li><strong>Template Strategy</strong>: Preparare template versatili e conversazionali</li>
+<li><strong>Monitor & Adapt</strong>: Quality rating e tier progression sono critical metrics</li>
+</ul>
+</div>
+
+<p>Il vincolo diventa opportunità: costruire un AI agent che <strong>rispetta il tempo e l'attenzione del founder</strong>, non uno che compete per attention con notifiche spam.</p>
+
+<div class="info">
+<strong>🔄 Next R&D Iteration Focus</strong><br>
+Memory persistence strategies per Euryst - come mantenere context ricco nonostante conversation gaps causati dai session windows.
+</div>
+
+<p><a href="/">← Back to R&D Index</a></p>
+
+</body>
+</html>
