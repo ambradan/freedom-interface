@@ -1,6 +1,6 @@
 {
-  "iterations": 37,
-  "last_project": "Code Forensics",
+  "iterations": 38,
+  "last_project": "TechPulse",
   "findings": [
     {
       "iteration": 4,
@@ -169,7 +169,14 @@
       "problem": "WhatsApp API limits",
       "page": "rnd-20260227-0601-euryst-WhatsApp-API-limits.html",
       "ts": "2026-02-27T06:01:52.079206"
+    },
+    {
+      "iteration": 38,
+      "project": "TechPulse",
+      "problem": "data freshness",
+      "page": "rnd-20260301-0601-techpulse-data-freshness.html",
+      "ts": "2026-03-01T06:01:01.841527"
     }
   ],
-  "last_search": "enterprise pricing solution implementation guide 2024 2025"
+  "last_search": "data freshness solution implementation guide 2024 2025"
 }

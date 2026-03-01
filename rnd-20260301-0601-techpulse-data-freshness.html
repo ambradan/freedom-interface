@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: TechPulse - data freshness</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #332200; padding: 10px; border-left: 3px solid #ff0; margin: 20px 0; }
+.solution { background: #002200; padding: 10px; border-left: 3px solid #0f0; margin: 20px 0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #38 | 2026-03-01 06:00</p>
+<h1>TechPulse: data freshness</h1>
+
+<h2>Il Problema</h2>
+<p>TechPulse è un sistema di <strong>predictive workforce intelligence</strong> che analizza competenze e trend di mercato. Il problema critico è la <strong>data freshness</strong>: i dati su competenze, tecnologie emergenti e trend del mercato del lavoro diventano obsoleti rapidamente.</p>
+
+<div class="warning">
+<strong>⚠️ Criticità specifiche:</strong>
+<ul>
+<li>Tecnologie emergono e diventano mainstream in mesi, non anni</li>
+<li>Job posting e skill demand cambiano settimanalmente</li>
+<li>LLM multi-model hanno knowledge cutoff diversi</li>
+<li>Supabase Edge Functions necessitano dati real-time per predizioni accurate</li>
+</ul>
+</div>
+
+<h2>Approcci Comuni per Data Freshness</h2>
+
+<h3>1. Real-time Data Ingestion Pipeline</h3>
+<div class="solution">
+<p><strong>Strategia:</strong> Pipeline ETL continua con multiple sorgenti</p>
+<ul>
+<li><strong>Job Boards API:</strong> LinkedIn, Indeed, Glassdoor (polling ogni 6-12h)</li>
+<li><strong>Tech News RSS:</strong> HackerNews, TechCrunch, GitHub Trending</li>
+<li><strong>Stack Overflow Trends:</strong> API per tag popularity</li>
+<li><strong>GitHub API:</strong> Repository stars, language trends, topic growth</li>
+</ul>
+<code>Supabase Edge Function → Cron trigger → Ingest → PostgreSQL + Vector Store</code>
+</div>
+
+<h3>2. Hybrid LLM Strategy con Web Search</h3>
+<div class="solution">
+<p><strong>Strategia:</strong> Combina LLM knowledge con real-time web search</p>
+<ul>
+<li><strong>Perplexity API:</strong> Real-time web search con citations</li>
+<li><strong>Tavily AI:</strong> Search API ottimizzata per AI agents</li>
+<li><strong>Exa (ex-Metaphor):</strong> Semantic search per contenuti tecnici</li>
+<li><strong>Fallback chain:</strong> GPT-4 → Claude → Perplexity per dati recenti</li>
+</ul>
+<code>React UI → Edge Function → LLM routing → Web search augmentation</code>
+</div>
+
+<h3>3. Incremental Vector Store Updates</h3>
+<div class="solution">
+<p><strong>Strategia:</strong> Embeddings incrementali con time-decay</p>
+<ul>
+<li><strong>Supabase pgvector:</strong> Embeddings con timestamp metadata</li>
+<li><strong>Time-weighted retrieval:</strong> Boost documenti recenti in similarity search</li>
+<li><strong>Automatic pruning:</strong> Rimuovi embeddings >6 mesi per skill volatili</li>
+<li><strong>Refresh strategy:</strong> Re-embed documenti popolari ogni 30 giorni</li>
+</ul>
+<code>ALTER TABLE embeddings ADD COLUMN freshness_score FLOAT;</code>
+</div>
+
+<h3>4. Change Detection & Alerting</h3>
+<div class="solution">
+<p><strong>Strategia:</strong> Monitora drift nei dati e allerta</p>
+<ul>
+<li><strong>Skill velocity tracking:</strong> Misura tasso di crescita skill demand</li>
+<li><strong>Anomaly detection:</strong> Identifica spike improvvisi (es. nuovo framework)</li>
+<li><strong>Confidence scoring:</strong> Flag predizioni basate su dati stale</li>
+<li><strong>User feedback loop:</strong> "Questi dati sembrano aggiornati?" → retrain signal</li>
+</ul>
+</div>
+
+<h2>Stack Specifico per TechPulse</h2>
+
+<h3>Architettura Proposta</h3>
+<pre><code>┌─────────────────┐
+│  React + Vite   │ ← UI con freshness indicators
+└────────┬────────┘
+         │
+┌────────▼────────┐
+│ Supabase Edge   │ ← Multi-LLM routing + web search
+│   Functions     │
+└────────┬────────┘
+         │
+    ┌────┴─────┬──────────┬──────────┐
+    │          │          │          │
+┌───▼───┐  ┌──▼──┐   ┌───▼───┐  ┌──▼──┐
+│ GPT-4 │  │Claude│  │Perplexity│ │Exa│
+└───┬───┘  └──┬──┘   └───┬───┘  └──┬──┘
+    │         │          │         │
+    └─────────┴──────────┴─────────┘
+              │
+    ┌─────────▼─────────┐
+    │ Supabase Postgres │
+    │   + pgvector      │ ← Embeddings con timestamp
+    └───────────────────┘
+</code></pre>
+
+<h3>Implementazione Concreta</h3>
+
+<p><strong>1. Edge Function per Data Ingestion (Cron ogni 6h):</strong></p>
+<pre><code>// supabase/functions/ingest-fresh-data/index.ts
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+
+serve(async (req) => {
+  const sources = [
+    fetchGitHubTrending(),
+    fetchStackOverflowTrends(),
+    fetchJobBoardAPIs(),
+    fetchTechNewsRSS()
+  ]
+  
+  const freshData = await Promise.all(sources)
+  
+  // Generate embeddings con OpenAI
+  const embeddings = await generateEmbeddings(freshData)
+  
+  // Store con timestamp
+  await supabase.from('skill_embeddings').insert(
+    embeddings.map(e => ({
+      ...e,
+      ingested_at: new Date(),
+      freshness_score: 1.0
+    }))
+  )
+  
+  return new Response(JSON.stringify({ updated: embeddings.length }))
+})
+</code></pre>
+
+<p><strong>2. Multi-LLM Router con Web Search Fallback:</strong></p>
+<pre><code>// supabase/functions/analyze-skills/index.ts
+async function analyzeSkills(query: string) {
+  // 1. Cerca in vector store (con time-decay)
+  const recentEmbeddings = await supabase.rpc('search_embeddings', {
+    query_embedding: await embed(query),
+    time_decay_factor: 0.1 // Boost recenti
+  })
+  
+  // 2. Se dati troppo vecchi, usa web search
+  const avgAge = calculateAvgAge(recentEmbeddings)
+  if (avgAge > 30) { // >30 giorni
+    const freshData = await perplexitySearch(query)
+    return { data: freshData, source: 'web_search' }
+  }
+  
+  // 3. Altrimenti usa LLM con context
+  const response = await callLLM(query, recentEmbeddings)
+  return { data: response, source: 'vector_store' }
+}
+</code></pre>
+
+<p><strong>3. React UI con Freshness Indicator:</strong></p>
+<pre><code>// src/components/SkillAnalysis.tsx
+function SkillAnalysis({ skill }) {
+  const { data, source, lastUpdated } = useSkillData(skill)
+  
+  return (
+    &lt;div&gt;
+      &lt;h2&gt;{skill}&lt;/h2&gt;
+      {source === 'web_search' && (
+        &lt;Badge color="green"&gt;🔴 Live data&lt;/Badge&gt;
+      )}
+      {source === 'vector_store' && (
+        &lt;Badge color="yellow"&gt;
+          📊 Updated {formatRelative(lastUpdated)}
+        &lt;/Badge&gt;
+      )}
+      {/* ... rest of UI */}
+    &lt;/div&gt;
+  )
+}
+</code></pre>
+
+<h2>Risorse Utili</h2>
+
+<h3>API & Servizi</h3>
+<ul>
+<li><a href="https://docs.perplexity.ai/">Perplexity API</a> - Real-time web search con LLM</li>
+<li><a href="https://tavily.com/">Tavily AI</a> - Search API per AI agents</li>
+<li><a href="https://exa.ai/">Exa</a> - Semantic search per contenuti tecnici</li>
+<li><a href="https://supabase.com/docs/guides/database/extensions/pgvector">Supabase pgvector</a> - Vector similarity search</li>
+<li><a href="https://supabase.com/docs/guides/functions/schedule-functions">Supabase Cron</a> - Scheduled Edge Functions</li>
+</ul>
+
+<h3>Data Sources</h3>
+<ul>
+<li><a href="https://docs.github.com/en/rest">GitHub REST API</a> - Trending repos, language stats</li>
+<li><a href="https://api.stackexchange.com/">Stack Exchange API</a> - Tag trends, question volume</li>
+<li><a href="https://hnrss.org/">HackerNews RSS</a> - Tech news feed</li>
+<li><a href="https://developers.google.com/custom-search">Google Custom Search</a> - Job postings scraping</li>
+</ul>
+
+<h3>Patterns & Best Practices</h3>
+<ul>
+<li><a href="https://github.com/langchain-ai/langchain/blob/master/docs/docs/use_cases/web_scraping.md">LangChain Web Scraping</a> - Patterns per data ingestion</li>
+<li><a href="https://arxiv.org/abs/2310.06825">Retrieval-Augmented Generation</a> - RAG con fresh data</li>
+<li><a href="https://www.pinecone.io/learn/vector-database-time-decay/">Time-decay in Vector Databases</a> - Freshness scoring</li>
+</ul>
+
+<h2>Next Steps per Ambra</h2>
+
+<h3>Priorità Alta (Questa Settimana)</h3>
+<ol>
+<li><strong>Setup Perplexity API:</strong> Account + test integration in Edge Function</li>
+<li><strong>Implementa Cron Job:</strong> Supabase function per ingest GitHub trending (ogni 12h)</li>
+<li><strong>Aggiungi timestamp a embeddings:</strong> Migrazione DB + freshness_score column</li>
+<li><strong>UI Freshness Badge:</strong> Mostra "Last updated" su ogni skill card</li>
+</ol>
+
+<h3>Priorità Media (Prossime 2 Settimane)</h3>
+<ol>
+<li><strong>Multi-source ingestion:</strong> Aggiungi Stack Overflow + job boards API</li>
+<li><strong>Time-decay search:</strong> Modifica similarity search con boost temporale</li>
+<li><strong>Confidence scoring:</strong> Calcola e mostra confidence basato su data age</li>
+<li><strong>A/B test:</strong> Vector store vs web search per query diverse</li>
+</ol>
+
+<h3>Priorità Bassa (Backlog)</h3>
+<ul>
+<li>Anomaly detection per skill spike</li>
+<li>User feedback loop ("Questi dati sono accurati?")</li>
+<li>Automatic re-embedding di documenti popolari</li>
+<li>Dashboard admin per monitoring data freshness</li>
+</ul>
+
+<h3>Metriche da Tracciare</h3>
+<pre><code>CREATE TABLE freshness_metrics (
+  id UUID PRIMARY KEY,
+  query TEXT,
+  data_source TEXT, -- 'vector_store' | 'web_search'
+  avg_data_age_days FLOAT,
+  user_satisfaction INT, -- 1-5 rating
+  created_at TIMESTAMP DEFAULT NOW()
+);
+</code></pre>
+
+<div class="warning">
+<strong>🎯 Quick Win Immediato:</strong>
+<p>Inizia con Perplexity API come fallback. Se embeddings >30 giorni, chiama Perplexity. Deploy in 2 ore, impatto immediato su data freshness.</p>
+<code>npm install @perplexity-ai/client</code>
+</div>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
