@@ -1,6 +1,6 @@
 {
-  "iterations": 39,
-  "last_project": "Code Forensics",
+  "iterations": 40,
+  "last_project": "Euryst",
   "findings": [
     {
       "iteration": 4,
@@ -176,7 +176,14 @@
       "problem": "data freshness",
       "page": "rnd-20260301-0601-techpulse-data-freshness.html",
       "ts": "2026-03-01T06:01:01.841527"
+    },
+    {
+      "iteration": 40,
+      "project": "Euryst",
+      "problem": "memory persistence",
+      "page": "rnd-20260303-0600-euryst-memory-persistence.html",
+      "ts": "2026-03-03T06:00:55.497672"
     }
   ],
-  "last_search": "enterprise pricing solution implementation guide 2024 2025"
+  "last_search": "memory persistence solution implementation guide 2024 2025"
 }

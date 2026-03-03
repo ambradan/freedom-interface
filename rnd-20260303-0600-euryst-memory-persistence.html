@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: Euryst - memory persistence</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #332200; border-left: 4px solid #ff0; padding: 12px; margin: 20px 0; }
+.solution { background: #003322; border-left: 4px solid #0f0; padding: 12px; margin: 20px 0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #40 | 2026-03-03 06:00</p>
+<h1>Euryst: memory persistence</h1>
+
+<h2>Il Problema</h2>
+<p>Euryst è un AI agent WhatsApp che funge da "layer cognitivo persistente" per founder. Il challenge principale è mantenere memoria coerente e contestuale attraverso conversazioni WhatsApp distribuite nel tempo.</p>
+
+<div class="warning">
+<strong>⚠️ Challenge Core:</strong> WhatsApp Business API è stateless. Ogni messaggio è un evento isolato. Serve architettura di memoria che persista identità, contesto, decisioni e relazioni nel tempo.
+</div>
+
+<h2>Architetture di Memory Persistence</h2>
+
+<h3>1. Hierarchical Memory System</h3>
+<p>Ispirato a sistemi cognitivi umani:</p>
+<ul>
+<li><strong>Working Memory</strong>: ultimi N messaggi in cache (Redis/Upstash)</li>
+<li><strong>Episodic Memory</strong>: conversazioni complete con embedding semantico (Qdrant/Pinecone)</li>
+<li><strong>Semantic Memory</strong>: fatti estratti, entità, relazioni (Neo4j/PostgreSQL)</li>
+<li><strong>Procedural Memory</strong>: pattern di interazione, preferenze utente (key-value store)</li>
+</ul>
+
+<div class="solution">
+<strong>✓ Per Euryst:</strong> Founder hanno conversazioni ricorrenti su progetti, decisioni, metriche. Serve semantic layer che colleghi "quel problema di scaling di TenderMatch" menzionato 3 settimane fa con "i nuovi limiti database" di oggi.
+</div>
+
+<h3>2. Graph-Based Context</h3>
+<pre><code>// Neo4j schema example
+(Founder)-[:WORKS_ON]->(Project)
+(Project)-[:HAS_CHALLENGE]->(Problem)
+(Conversation)-[:MENTIONS]->(Problem)
+(Decision)-[:ADDRESSES]->(Problem)
+(Decision)-[:MADE_IN]->(Conversation)
+</code></pre>
+
+<p>Vantaggi:</p>
+<ul>
+<li>Query contestuali: "Quali decisioni ho preso su questo problema?"</li>
+<li>Evoluzione temporale: tracking di come pensiero cambia</li>
+<li>Relazioni implicite: scoperta pattern cross-progetto</li>
+</ul>
+
+<h3>3. Vector Memory + Metadata Filtering</h3>
+<p>Ogni conversazione → embedding + metadata strutturati:</p>
+<pre><code>{
+  "vector": [...],
+  "metadata": {
+    "user_id": "founder_123",
+    "project": "TenderMatch",
+    "topic": "scaling",
+    "sentiment": "concerned",
+    "entities": ["PostgreSQL", "Railway", "costs"],
+    "timestamp": "2026-02-15T14:30:00Z",
+    "context_window": "previous_3_days"
+  }
+}
+</code></pre>
+
+<h2>Implementazione per WhatsApp Agent</h2>
+
+<h3>Architecture Pattern</h3>
+<pre><code>WhatsApp Message
+    ↓
+Webhook Handler (FastAPI/Express)
+    ↓
+Message Preprocessor
+    ├→ Extract entities (NER)
+    ├→ Classify intent
+    └→ Retrieve context
+    ↓
+Memory Retrieval Layer
+    ├→ Recent messages (Redis)
+    ├→ Semantic search (Qdrant)
+    └→ Graph traversal (Neo4j)
+    ↓
+LLM Context Assembly
+    ├→ System prompt + founder profile
+    ├→ Relevant past conversations
+    └→ Current thread
+    ↓
+Response Generation (Claude/GPT-4)
+    ↓
+Memory Update Layer
+    ├→ Store message + embedding
+    ├→ Update graph relationships
+    └→ Refresh working memory
+    ↓
+WhatsApp Business API
+</code></pre>
+
+<h3>Persistent Storage Stack</h3>
+<ol>
+<li><strong>PostgreSQL/Supabase</strong>: conversazioni raw, metadata, user profiles</li>
+<li><strong>Qdrant/Pinecone</strong>: vector embeddings per semantic search</li>
+<li><strong>Neo4j/Memgraph</strong>: knowledge graph (opzionale ma potente)</li>
+<li><strong>Redis/Upstash</strong>: working memory cache, session state</li>
+</ol>
+
+<h2>Challenges Specifici WhatsApp</h2>
+
+<div class="warning">
+<strong>Rate Limits:</strong>
+<ul>
+<li>WhatsApp Business API ha limiti su messaggi/secondo</li>
+<li>Template messages vs session messages (24h window)</li>
+<li>Serve queue system (BullMQ/Celery) per gestire backpressure</li>
+</ul>
+</div>
+
+<h3>Session Management</h3>
+<p>WhatsApp ha "customer service window" di 24h dopo ultimo messaggio utente. Dopo, serve template pre-approvato.</p>
+
+<p><strong>Strategia:</strong></p>
+<ul>
+<li>Tracking ultimo messaggio utente per ogni conversazione</li>
+<li>Proactive memory consolidation quando window sta per chiudersi</li>
+<li>Template messages per "memory refresh" ("Ehi, 3 giorni fa parlavi di X, aggiornamenti?")</li>
+</ul>
+
+<h2>Memory Consolidation Strategies</h2>
+
+<h3>1. Nightly Batch Processing</h3>
+<pre><code># Pseudocode
+async def consolidate_memories():
+    conversations = get_today_conversations()
+    for conv in conversations:
+        # Extract key decisions
+        decisions = extract_decisions(conv)
+        
+        # Update knowledge graph
+        update_graph(decisions)
+        
+        # Generate summary embedding
+        summary = summarize_conversation(conv)
+        store_embedding(summary)
+        
+        # Prune working memory
+        cleanup_cache(conv.user_id)
+</code></pre>
+
+<h3>2. Incremental Updates</h3>
+<p>Ogni messaggio triggera micro-updates:</p>
+<ul>
+<li>Embedding immediato in vector store</li>
+<li>Entity extraction e graph update</li>
+<li>Cache refresh per working memory</li>
+</ul>
+
+<h2>Risorse Tecniche</h2>
+
+<h3>Papers & Concepts</h3>
+<ul>
+<li><a href="https://arxiv.org/abs/2304.03442">MemGPT: Towards LLMs as Operating Systems</a></li>
+<li><a href="https://arxiv.org/abs/2310.08560">Retrieval-Augmented Generation (RAG)</a></li>
+<li>LangChain Memory Modules: <a href="https://python.langchain.com/docs/modules/memory/">docs</a></li>
+</ul>
+
+<h3>Tools & Libraries</h3>
+<ul>
+<li><strong>whatsapp-web.js</strong>: unofficial API (più flessibile ma fragile)</li>
+<li><strong>WhatsApp Business API</strong>: ufficiale, stabile, con limiti</li>
+<li><strong>LangChain/LlamaIndex</strong>: memory abstractions</li>
+<li><strong>Qdrant Python client</strong>: vector operations</li>
+<li><strong>Neo4j driver</strong>: graph queries</li>
+</ul>
+
+<h3>Reference Architectures</h3>
+<ul>
+<li><a href="https://github.com/langchain-ai/langchain/tree/master/libs/langchain/langchain/memory">LangChain Memory</a></li>
+<li><a href="https://docs.pinecone.io/guides/get-started/build-a-chatbot">Pinecone Chatbot Guide</a></li>
+<li><a href="https://python.langchain.com/docs/use_cases/graph/">LangChain + Neo4j</a></li>
+</ul>
+
+<h2>Next Steps per Ambra</h2>
+
+<div class="solution">
+<h3>Phase 1: MVP Memory (Week 1-2)</h3>
+<ol>
+<li>Setup PostgreSQL schema per conversazioni</li>
+<li>Implement basic vector store (Qdrant cloud free tier)</li>
+<li>Simple RAG: retrieve last 5 relevant conversations</li>
+<li>Test con WhatsApp Business API sandbox</li>
+</ol>
+
+<h3>Phase 2: Enhanced Context (Week 3-4)</h3>
+<ol>
+<li>Add entity extraction (spaCy/OpenAI function calling)</li>
+<li>Implement working memory cache (Upstash Redis)</li>
+<li>Build conversation summarization pipeline</li>
+<li>Test memory recall accuracy</li>
+</ol>
+
+<h3>Phase 3: Knowledge Graph (Month 2)</h3>
+<ol>
+<li>Setup Neo4j Aura free tier</li>
+<li>Design schema per founder/project/decision entities</li>
+<li>Implement graph updates on ogni conversazione</li>
+<li>Build graph-based context retrieval</li>
+</ol>
+</div>
+
+<h2>Metriche di Successo</h2>
+<ul>
+<li><strong>Context Recall</strong>: % volte che agent ricorda info rilevante passata</li>
+<li><strong>Response Coherence</strong>: coerenza con conversazioni precedenti</li>
+<li><strong>Latency</strong>: tempo retrieval + generation < 3s</li>
+<li><strong>Storage Efficiency</strong>: costo per utente/mese</li>
+</ul>
+
+<h2>Rischi & Mitigazioni</h2>
+<ul>
+<li><strong>Cost explosion</strong>: vector storage scala con conversazioni → implement pruning strategy</li>
+<li><strong>Context pollution</strong>: troppa memoria = noise → semantic filtering + relevance scoring</li>
+<li><strong>WhatsApp bans</strong>: rispetta rate limits, avoid spam patterns</li>
+<li><strong>Privacy</strong>: founder data sensibili → encryption at rest, GDPR compliance</li>
+</ul>
+
+<p class="meta">Documentazione compilata da Freedom R&D basata su best practices memoria persistente per AI agents conversazionali.</p>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
