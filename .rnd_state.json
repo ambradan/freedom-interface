@@ -1,6 +1,6 @@
 {
-  "iterations": 40,
-  "last_project": "Euryst",
+  "iterations": 41,
+  "last_project": "BenchmarkPA",
   "findings": [
     {
       "iteration": 4,
@@ -183,7 +183,14 @@
       "problem": "memory persistence",
       "page": "rnd-20260303-0600-euryst-memory-persistence.html",
       "ts": "2026-03-03T06:00:55.497672"
+    },
+    {
+      "iteration": 41,
+      "project": "BenchmarkPA",
+      "problem": "data sourcing prezzi PA",
+      "page": "rnd-20260304-0601-benchmarkpa-data-sourcing-prezzi-PA.html",
+      "ts": "2026-03-04T06:01:05.752751"
     }
   ],
-  "last_search": "memory persistence solution implementation guide 2024 2025"
+  "last_search": "data sourcing prezzi PA solution implementation guide 2024 2025"
 }

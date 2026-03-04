@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: BenchmarkPA - data sourcing prezzi PA</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+h3 { color: #0c0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; border-radius: 3px; }
+pre { background: #222; padding: 15px; overflow-x: auto; border-left: 3px solid #0f0; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #332200; padding: 10px; border-left: 3px solid #ff9900; margin: 15px 0; }
+.tip { background: #003322; padding: 10px; border-left: 3px solid #00ff99; margin: 15px 0; }
+ul { line-height: 1.8; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #41 | Freedom R&D | 2026-03-04 06:00</p>
+
+<h1>🎯 BenchmarkPA: Data Sourcing Prezzi PA</h1>
+
+<h2>📋 Contesto Progetto</h2>
+<p><strong>Progetto:</strong> BenchmarkPA</p>
+<p><strong>Obiettivo:</strong> Sistema di pricing B2B2G per Pubbliche Amministrazioni con analisi sottosoglia</p>
+<p><strong>Stack:</strong> Supabase Edge Functions, PostgreSQL</p>
+<p><strong>Problema critico:</strong> Sourcing affidabile e strutturato dei dati prezzi delle gare PA</p>
+
+<h2>🔍 Analisi del Problema</h2>
+
+<h3>Sfide Specifiche del Data Sourcing PA</h3>
+<ul>
+<li><strong>Frammentazione delle fonti:</strong> Dati distribuiti su portali regionali, comunali, ANAC, CONSIP, MEF</li>
+<li><strong>Formati eterogenei:</strong> PDF, XML, CSV, HTML con strutture non standardizzate</li>
+<li><strong>Qualità variabile:</strong> Dati incompleti, errori di digitazione, categorizzazioni inconsistenti</li>
+<li><strong>Sottosoglia complicati:</strong> Gare sotto €40k spesso non pubblicate centralmente</li>
+<li><strong>Aggiornamento asincrono:</strong> Tempistiche di pubblicazione diverse per fonte</li>
+<li><strong>Normativa GDPR:</strong> Attenzione ai dati sensibili in documenti pubblici</li>
+</ul>
+
+<div class="warning">
+<strong>⚠️ Criticità Sottosoglia:</strong> Le gare sotto soglia comunitaria sono il 70% del volume ma hanno la peggiore copertura dati. Rappresentano il vero valore differenziante di BenchmarkPA.
+</div>
+
+<h2>💡 Approcci Comuni per il Data Sourcing PA</h2>
+
+<h3>1. API Istituzionali</h3>
+<p><strong>Fonti primarie:</strong></p>
+<ul>
+<li><strong>ANAC (Autorità Anticorruzione):</strong> <a href="https://dati.anticorruzione.it" target="_blank">dati.anticorruzione.it</a> - Dataset Open Data XML/JSON</li>
+<li><strong>CONSIP:</strong> Convenzioni e prezzi di riferimento</li>
+<li><strong>MEF OpenData:</strong> Dati finanziari aggregati</li>
+<li><strong>Portali regionali:</strong> Lombardia, Emilia-Romagna hanno API strutturate</li>
+</ul>
+
+<pre><code>// Esempio integrazione ANAC OpenData
+const fetchANACData = async () => {
+  const response = await fetch(
+    'https://dati.anticorruzione.it/opendata/dataset/cig'
+  );
+  // Parsing XML/JSON specifico
+  return parseANACFormat(response);
+};</code></pre>
+
+<h3>2. Web Scraping Strutturato</h3>
+<p>Per portali senza API (comuni, province piccole):</p>
+<ul>
+<li><strong>Puppeteer/Playwright:</strong> Automazione browser per portali dinamici</li>
+<li><strong>Cheerio:</strong> Parsing HTML statico</li>
+<li><strong>Scheduling:</strong> Cron jobs giornalieri/settimanali</li>
+<li><strong>Proxy rotation:</strong> Evitare blocchi IP</li>
+</ul>
+
+<div class="tip">
+<strong>💡 Best Practice:</strong> Implementare rate limiting rispettoso (1-2 req/sec) e user-agent identificabile con contatto email per segnalazioni.
+</div>
+
+<h3>3. OCR e Document Processing</h3>
+<p>Per PDF e documenti scansionati:</p>
+<ul>
+<li><strong>Tesseract.js:</strong> OCR open source in JavaScript</li>
+<li><strong>Google Document AI:</strong> Parsing avanzato con ML</li>
+<li><strong>AWS Textract:</strong> Estrazione tabelle e form</li>
+<li><strong>Apache Tika:</strong> Metadata extraction multi-formato</li>
+</ul>
+
+<h3>4. Crowdsourcing e Segnalazioni</h3>
+<ul>
+<li>Form per PA che auto-caricano dati</li>
+<li>Integrazione email forwarding (gare@benchmarkpa.it)</li>
+<li>Bot Telegram per segnalazioni rapide</li>
+</ul>
+
+<h2>🏗️ Architettura Proposta per BenchmarkPA</h2>
+
+<h3>Pipeline di Ingestion</h3>
+<pre><code>┌─────────────┐
+│ Data Sources│ (ANAC, CONSIP, Portali, PDF, Email)
+└──────┬──────┘
+       │
+┌──────▼──────────┐
+│ Supabase Edge   │ Scraping + API polling
+│ Functions       │ (Deno runtime)
+└──────┬──────────┘
+       │
+┌──────▼──────────┐
+│ Raw Data Queue  │ PostgreSQL staging table
+└──────┬──────────┘
+       │
+┌──────▼──────────┐
+│ Normalization   │ ML categorization
+│ & Enrichment    │ Price validation
+└──────┬──────────┘
+       │
+┌──────▼──────────┐
+│ PostgreSQL DB   │ Structured pricing data
+└─────────────────┘</code></pre>
+
+<h3>Schema Database Essenziale</h3>
+<pre><code>-- Tabella gare normalizzate
+CREATE TABLE gare_pa (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  cig VARCHAR(10) UNIQUE,
+  ente_appaltante TEXT,
+  oggetto TEXT,
+  importo_base DECIMAL(12,2),
+  importo_aggiudicazione DECIMAL(12,2),
+  categoria_merceologica VARCHAR(50),
+  data_pubblicazione DATE,
+  data_scadenza DATE,
+  sottosoglia BOOLEAN,
+  fonte VARCHAR(100),
+  raw_data JSONB,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Indici per query performance
+CREATE INDEX idx_categoria ON gare_pa(categoria_merceologica);
+CREATE INDEX idx_importo ON gare_pa(importo_aggiudicazione);
+CREATE INDEX idx_sottosoglia ON gare_pa(sottosoglia);
+CREATE INDEX idx_data ON gare_pa(data_pubblicazione DESC);</code></pre>
+
+<h2>🔗 Risorse Utili</h2>
+
+<h3>Fonti Dati PA Italiane</h3>
+<ul>
+<li><a href="https://dati.anticorruzione.it" target="_blank">ANAC Open Data</a> - Dataset gare e contratti</li>
+<li><a href="https://www.acquistinretepa.it" target="_blank">CONSIP Acquisti in Rete</a> - Convenzioni attive</li>
+<li><a href="https://www.dati.gov.it" target="_blank">Dati.gov.it</a> - Portale nazionale Open Data</li>
+<li><a href="https://www.serviziocontrattipubblici.it" target="_blank">SCP</a> - Servizio Contratti Pubblici</li>
+<li><a href="https://ted.europa.eu" target="_blank">TED Europa</a> - Gare sopra soglia UE</li>
+</ul>
+
+<h3>Strumenti e Librerie</h3>
+<ul>
+<li><strong>Deno per Edge Functions:</strong> <code>deno.land/x/puppeteer</code></li>
+<li><strong>XML Parsing:</strong> <code>npm:fast-xml-parser</code></li>
+<li><strong>PDF Processing:</strong> <code>npm:pdf-parse</code></li>
+<li><strong>Scheduling:</strong> Supabase pg_cron extension</li>
+<li><strong>ML Categorization:</strong> OpenAI API o modelli locali (DistilBERT)</li>
+</ul>
+
+<h3>Normativa di Riferimento</h3>
+<ul>
+<li><strong>D.Lgs 50/2016:</strong> Codice Appalti (soglie €40k, €140k, €215k)</li>
+<li><strong>Legge 190/2012:</strong> Trasparenza e anticorruzione</li>
+<li><strong>CAD:</strong> Codice Amministrazione Digitale (formato dati)</li>
+</ul>
+
+<h2>🚀 Next Steps per Ambra</h2>
+
+<h3>Fase 1: MVP Data Pipeline (Settimana 1-2)</h3>
+<ol>
+<li><strong>Setup Supabase Edge Function</strong> per polling ANAC Open Data (dataset CIG)</li>
+<li><strong>Creare tabelle PostgreSQL</strong> con schema proposto sopra</li>
+<li><strong>Implementare parser XML</strong> per formato ANAC standard</li>
+<li><strong>Dashboard minimale</strong> per monitorare ingestion (righe/giorno, errori)</li>
+</ol>
+
+<pre><code>// Starter Edge Function (functions/ingest-anac/index.ts)
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+serve(async (req) => {
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  );
+
+  // Fetch ANAC data
+  const anacResponse = await fetch('URL_DATASET_ANAC');
+  const data = await anacResponse.text();
+  
+  // Parse e insert
+  const parsed = parseANACXML(data);
+  const { error } = await supabase
+    .from('gare_pa')
+    .upsert(parsed, { onConflict: 'cig' });
+
+  return new Response(JSON.stringify({ 
+    inserted: parsed.length,
+    error 
+  }));
+});</code></pre>
+
+<h3>Fase 2: Enrichment e Qualità (Settimana 3-4)</h3>
+<ol>
+<li><strong>Categorizzazione automatica</strong> con keyword matching o GPT-4</li>
+<li><strong>Validazione prezzi</strong> (outlier detection, range checking)</li>
+<li><strong>Deduplicazione</strong> CIG duplicati da fonti multiple</li>
+<li><strong>Geocoding enti</strong> per analisi territoriali</li>
+</ol>
+
+<h3>Fase 3: Scaling e Fonti Multiple (Settimana 5-8)</h3>
+<ol>
+<li><strong>Aggiungere scraper</strong> per 3-5 portali regionali prioritari</li>
+<li><strong>Email ingestion</strong> per segnalazioni dirette</li>
+<li><strong>Monitoring e alerting</strong> (fonte down, anomalie dati)</li>
+<li><strong>API pubblica</strong> per query prezzi (con rate limiting)</li>
+</ol>
+
+<div class="tip">
+<strong>💡 Quick Win:</strong> Inizia con ANAC + CONSIP (80% coverage gare rilevanti). Aggiungi fonti regionali iterativamente basandoti su richieste utenti reali.
+</div>
+
+<h3>Metriche di Successo</h3>
+<ul>
+<li><strong>Coverage:</strong> >10.000 gare indicizzate entro 30 giorni</li>
+<li><strong>Freshness:</strong> Dati aggiornati con latenza <24h</li>
+<li><strong>Quality:</strong> <5% righe con errori di parsing</li>
+<li><strong>Sottosoglia:</strong> >30% gare sotto €40k (differenziatore chiave)</li>
+</ul>
+
+<h2>⚡ Considerazioni Tecniche Supabase</h2>
+
+<ul>
+<li><strong>Edge Functions timeout:</strong> Max 60s, usare queue per job lunghi</li>
+<li><strong>PostgreSQL limits:</strong> Free tier 500MB, pianificare retention policy</li>
+<li><strong>Rate limiting:</strong> Implementare con <code>pg_cron</code> per evitare ban IP</li>
+<li><strong>Costi:</strong> Pro plan ~$25/mese necessario per production load</li>
+</ul>
+
+<h2>📚 Riferimenti Aggiuntivi</h2>
+<ul>
+<li><a href="https://github.com/italia/awesome-italia-opensource" target="_blank">Awesome Italia Open Source</a> - Progetti PA italiani</li>
+<li><a href="https://docs.italia.it/italia/piano-triennale-ict/pianotriennale-ict-doc/" target="_blank">Piano Triennale ICT</a> - Linee guida digitalizzazione PA</li>
+<li><a href="https://forum.italia.it" target="_blank">Forum Italia</a> - Community sviluppatori PA</li>
+</ul>
+
+<hr>
+
+<p class="meta">
+Documento generato da Freedom R&D Agent | Stack: Supabase + PostgreSQL<br>
+Per domande tecniche: ambra@benchmarkpa.dev
+</p>
+
+<p><a href="/">← Back to R&D Index</a></p>
+
+</body>
+</html>
