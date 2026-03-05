@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: CDSS - UX medico</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+h3 { color: #0c0; margin-top: 24px; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; border-radius: 3px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #331a00; border-left: 4px solid #ff6600; padding: 12px; margin: 16px 0; }
+.info { background: #001a33; border-left: 4px solid #0066ff; padding: 12px; margin: 16px 0; }
+.success { background: #001a1a; border-left: 4px solid #00ff00; padding: 12px; margin: 16px 0; }
+ul { line-height: 1.8; }
+table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+th, td { border: 1px solid #333; padding: 8px; text-align: left; }
+th { background: #222; color: #0f0; }
+.example { background: #1a1a1a; border: 1px solid #333; padding: 12px; margin: 16px 0; border-radius: 4px; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #42 | 2026-03-05 06:00</p>
+<h1>CDSS: UX medico</h1>
+
+<div class="warning">
+<strong>⚠️ Context Critico:</strong> Un CDSS per MDR Class IIa richiede UX che supporti il ragionamento clinico senza sostituirlo. L'interfaccia medico è il punto dove si decide se il sistema amplifica o ostacola il decision-making.
+</div>
+
+<h2>Il Problema</h2>
+
+<p>L'interfaccia medico in un CDSS deve bilanciare requisiti contrastanti:</p>
+
+<table>
+<tr>
+<th>Requisito</th>
+<th>Tensione</th>
+</tr>
+<tr>
+<td><strong>Densità informativa</strong></td>
+<td>vs. Cognitive overload</td>
+</tr>
+<tr>
+<td><strong>Velocità accesso</strong></td>
+<td>vs. Accuratezza verifica</td>
+</tr>
+<tr>
+<td><strong>Automazione</strong></td>
+<td>vs. Controllo manuale</td>
+</tr>
+<tr>
+<td><strong>Standardizzazione</strong></td>
+<td>vs. Personalizzazione workflow</td>
+</tr>
+<tr>
+<td><strong>Compliance MDR</strong></td>
+<td>vs. Fluidità UX</td>
+</tr>
+</table>
+
+<p>Nel contesto CDSS specifico (Next.js 16, PostgreSQL 16, MinIO su Hetzner), il problema si manifesta in:</p>
+
+<ul>
+<li>Gestione documenti multi-pagina (PDF, DICOM, immagini)</li>
+<li>Visualizzazione evidenze con traceability completa</li>
+<li>Workflow ipotesi diagnostiche ranked vs. non-ranked</li>
+<li>Interfaccia paziente vs. interfaccia medico (role-based UI)</li>
+<li>Performance su dataset clinici reali (latenza query, rendering)</li>
+</ul>
+
+<h2>Principi UX per CDSS Medicale</h2>
+
+<h3>1. Cognitive Load Management</h3>
+
+<div class="info">
+<strong>Regola d'oro:</strong> Un medico in pronto soccorso ha ~2 minuti per paziente. L'interfaccia deve surfacing le informazioni critiche in <strong>&lt;5 secondi</strong>.
+</div>
+
+<p><strong>Pattern efficaci:</strong></p>
+
+<ul>
+<li><strong>Progressive disclosure:</strong> Overview → Dettaglio → Evidence chain</li>
+<li><strong>Visual hierarchy:</strong> Colore per urgency (red flags), dimensione per confidence</li>
+<li><strong>Chunking:</strong> Max 7±2 elementi per schermata (Miller's Law)</li>
+<li><strong>Scannability:</strong> Bullet points, bold keywords, whitespace</li>
+</ul>
+
+<div class="example">
+<strong>Esempio - Dashboard Paziente:</strong><br>
+<code>
+┌─────────────────────────────────────────┐<br>
+│ ROSSI MARIO (70M) | 🔴 2 RED FLAGS      │<br>
+├─────────────────────────────────────────┤<br>
+│ 🩺 Diagnosi attive (3)                  │<br>
+│   • Artrosi ginocchio dx [RX 15/02]    │<br>
+│   • Ipertensione [Visite x5]            │<br>
+│   • Diabete T2 [Lab 01/03]              │<br>
+├─────────────────────────────────────────┤<br>
+│ 💊 Farmaci (4) | ⚠️ 1 interazione       │<br>
+│ 📄 Documenti (12) | 🔍 2 non processati │<br>
+└─────────────────────────────────────────┘
+</code>
+</div>
+
+<h3>2. Traceability & Trust</h3>
+
+<p>Per MDR Class IIa, ogni output deve essere tracciabile a fonte primaria.</p>
+
+<p><strong>UX Requirements:</strong></p>
+
+<ul>
+<li>Ogni dato clinico → link diretto a documento sorgente</li>
+<li>Hover su diagnosi → snippet estratto + confidence score</li>
+<li>Click → PDF viewer con highlight del testo estratto</li>
+<li>Cronologia modifiche (chi, quando, perché)</li>
+</ul>
+
+<div class="example">
+<strong>Esempio - Evidence Tooltip:</strong><br>
+<code>
+Artrosi ginocchio dx [92% confidence]<br>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━<br>
+Fonte: RX ginocchio 15/02/2026<br>
+"...marcata riduzione della rima<br>
+articolare, osteofiti marginali..."<br>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━<br>
+[Vedi documento] [Storia modifiche]
+</code>
+</div>
+
+<h3>3. Workflow-Centric Design</h3>
+
+<p>Non progettare per "utente generico medico". Progetta per <strong>task clinici specifici</strong>.</p>
+
+<table>
+<tr>
+<th>Task</th>
+<th>Priorità UX</th>
+<th>Metriche</th>
+</tr>
+<tr>
+<td><strong>Triage PS</strong></td>
+<td>Red flags visibili in 3 sec</td>
+<td>Time to critical info</td>
+</tr>
+<tr>
+<td><strong>Visita ambulatorio</strong></td>
+<td>Storia clinica completa</td>
+<td>Completeness score</td>
+</tr>
+<tr>
+<td><strong>Follow-up</strong></td>
+<td>Delta vs. visita precedente</td>
+<td>Change detection accuracy</td>
+</tr>
+<tr>
+<td><strong>Refertazione</strong></td>
+<td>Export strutturato</td>
+<td>Export format compliance</td>
+</tr>
+</table>
+
+<h3>4. Error Prevention & Recovery</h3>
+
+<p>In ambito clinico, gli errori hanno conseguenze reali.</p>
+
+<p><strong>Pattern di sicurezza:</strong></p>
+
+<ul>
+<li><strong>Confirmation dialogs:</strong> Per azioni irreversibili (delete documento, modifica diagnosi)</li>
+<li><strong>Undo stack:</strong> Cronologia ultime 10 azioni con rollback</li>
+<li><strong>Conflict resolution:</strong> Se AI suggerisce diagnosi contraddittoria con storico</li>
+<li><strong>Graceful degradation:</strong> Se OCR fallisce, mostra PDF raw + input manuale</li>
+</ul>
+
+<div class="warning">
+<strong>Anti-pattern da evitare:</strong><br>
+❌ Bottoni "Delete" rossi senza confirm<br>
+❌ Auto-save senza visual feedback<br>
+❌ Error messages generici ("Errore sconosciuto")<br>
+❌ Timeout senza retry automatico
+</div>
+
+<h2>Implementazione Stack-Specific</h2>
+
+<h3>Next.js 16 + TypeScript</h3>
+
+<p><strong>Vantaggi per UX medico:</strong></p>
+
+<ul>
+<li><strong>Server Components:</strong> Rendering lato server per dati sensibili (no esposizione client)</li>
+<li><strong>Streaming SSR:</strong> Progressive loading per documenti pesanti</li>
+<li><strong>Route handlers:</strong> API endpoints type-safe per validazione input clinico</li>
+<li><strong>Middleware:</strong> Role-based access control (medico vs. paziente)</li>
+</ul>
+
+<div class="example">
+<strong>Pattern - Protected Route:</strong><br>
+<code>
+// middleware.ts<br>
+export function middleware(req: NextRequest) {<br>
+  const role = req.cookies.get('role')?.value;<br>
+  if (req.nextUrl.pathname.startsWith('/medico')) {<br>
+    if (role !== 'CLINICIAN') return NextResponse.redirect('/login');<br>
+  }<br>
+  return NextResponse.next();<br>
+}
+</code>
+</div>
+
+<h3>PostgreSQL 16</h3>
+
+<p><strong>UX Performance:</strong></p>
+
+<ul>
+<li><strong>Full-text search:</strong> Ricerca veloce su extracted_text documenti</li>
+<li><strong>JSON columns:</strong> Metadata flessibili senza schema rigido</li>
+<li><strong>Materialized views:</strong> Dashboard aggregati pre-calcolati</li>
+<li><strong>Row-level security:</strong> Paziente vede solo i suoi dati</li>
+</ul>
+
+<div class="example">
+<strong>Query Ottimizzata - Dashboard:</strong><br>
+<code>
+CREATE MATERIALIZED VIEW patient_summary AS<br>
+SELECT p.id, p.name,<br>
+  COUNT(DISTINCT d.id) as doc_count,<br>
+  COUNT(DISTINCT dx.id) as diagnosis_count,<br>
+  MAX(v.date) as last_visit<br>
+FROM patients p<br>
+LEFT JOIN documents d ON d.patient_id = p.id<br>
+LEFT JOIN diagnoses dx ON dx.patient_id = p.id<br>
+LEFT JOIN visits v ON v.patient_id = p.id<br>
+GROUP BY p.id;<br>
+<br>
+-- Refresh ogni ora<br>
+REFRESH MATERIALIZED VIEW CONCURRENTLY patient_summary;
+</code>
+</div>
+
+<h3>MinIO (Document Storage)</h3>
+
+<p><strong>UX Considerations:</strong></p>
+
+<ul>
+<li><strong>Pre-signed URLs:</strong> Download diretto senza proxy Next.js</li>
+<li><strong>Thumbnail generation:</strong> Preview documenti senza download completo</li>
+<li><strong>Versioning:</strong> Storico modifiche documento (MDR requirement)</li>
+<li><strong>Lifecycle policies:</strong> Archiviazione automatica documenti vecchi</li>
+</ul>
+
+<h2>UI Components Library</h2>
+
+<p>Raccomandazioni per stack CDSS:</p>
+
+<table>
+<tr>
+<th>Componente</th>
+<th>Library</th>
+<th>Rationale</th>
+</tr>
+<tr>
+<td><strong>Design System</strong></td>
+<td>Radix UI + Tailwind</td>
+<td>Accessibilità WCAG 2.1 AA, customizzabile</td>
+</tr>
+<tr>
+<td><strong>Tables</strong></td>
+<td>TanStack Table</td>
+<td>Sorting, filtering, virtualizzazione</td>
+</tr>
+<tr>
+<td><strong>PDF Viewer</strong></td>
+<td>react-pdf</td>
+<td>Highlight testo, annotazioni</td>
+</tr>
+<tr>
+<td><strong>Charts</strong></td>
+<td>Recharts</td>
+<td>Trend valori laboratorio</td>
+</tr>
+<tr>
+<td><strong>Forms</strong></td>
+<td>React Hook Form + Zod</td>
+<td>Validazione type-safe</td>
+</tr>
+<tr>
+<td><strong>Notifications</strong></td>
+<td>Sonner</td>
+<td>Toast non invasivi</td>
+</tr>
+</table>
+
+<h2>Testing UX Medico</h2>
+
+<h3>Metodologia</h3>
+
+<ol>
+<li><strong>Heuristic Evaluation</strong> (Nielsen's 10 usability heuristics)</li>
+<li><strong>Cognitive Walkthrough</strong> (task-based, con medici reali)</li>
+<li><strong>A/B Testing</strong> (varianti layout per task critici)</li>
+<li><strong>Analytics</strong> (heatmaps, session recordings, funnel analysis)</li>
+</ol>
+
+<h3>Metriche Chiave</h3>
+
+<table>
+<tr>
+<th>Metrica</th>
+<th>Target</th>
+<th>Tool</th>
+</tr>
+<tr>
+<td><strong>Time to First Interaction</strong></td>
+<td>&lt; 2 sec</td>
+<td>Lighthouse, Web Vitals</td>
+</tr>
+<tr>
+<td><strong>Task Success Rate</strong></td>
+<td>&gt; 95%</td>
+<td>User testing</td>
+</tr>
+<tr>
+<td><strong>Error Rate</strong></td>
+<td>&lt; 5%</td>
+<td>Sentry, logs</td>
+</tr>
+<tr>
+<td><strong>System Usability Scale (SUS)</strong></td>
+<td>&gt; 70</td>
+<td>Questionario post-test</td>
+</tr>
+<tr>
+<td><strong>Net Promoter Score (NPS)</strong></td>
+<td>&gt; 50</td>
+<td>Survey periodici</td>
+</tr>
+</table>
+
+<h2>Compliance MDR & UX</h2>
+
+<p>L'interfaccia deve supportare requisiti regolatori:</p>
+
+<h3>Annex I - General Safety Requirements</h3>
+
+<ul>
+<li><strong>Chapter II, 5.1:</strong> "Devices shall be designed to minimize risks arising from errors"</li>
+<li><strong>UX Impact:</strong> Error prevention, confirmation dialogs, undo</li>
+</ul>
+
+<h3>Annex I - Chapter III (Information)</h3>
+
+<ul>
+<li><strong>23.1:</strong> "Instructions for use shall be provided with each device"</li>
+<li><strong>UX Impact:</strong> Contextual help, tooltips, onboarding wizard</li>
+</ul>
+
+<h3>IEC 62366 (Usability Engineering)</h3>
+
+<ul>
+<li>Identificazione <strong>use scenarios</strong> e <strong>use errors</strong></li>
+<li>Validazione con <strong>summative usability testing</strong> (15+ utenti)</li>
+<li>Documentazione <strong>usability engineering file</strong></li>
+</ul>
+
+<div class="success">
+<strong>✅ Checklist MDR-UX:</strong><br>
+□ Use scenarios documentati<br>
+□ Risk analysis per use errors<br>
+□ Formative testing (iterativo)<br>
+□ Summative testing (finale)<br>
+□ Instructions for use integrate in UI<br>
+□ Training materials per clinici
+</div>
+
+<h2>Risorse Utili</h2>
+
+<h3>Guidelines & Standards</h3>
+
+<ul>
+<li><a href="https://www.iso.org/standard/63179.html">IEC 62366-1:2015</a> - Medical devices usability engineering</li>
+<li><a href="https://www.nngroup.com/articles/medical-usability/">Nielsen Norman Group - Medical UX</a></li>
+<li><a href="https://www.fda.gov/media/80481/download">FDA - Applying Human Factors to Medical Devices</a></li>
+<li><a href="https://www.gov.uk/service-manual/design">NHS Digital Service Manual</a></li>
+</ul>
+
+<h3>Research Papers</h3>
+
+<ul>
+<li>Bates et al. (2003) - "Ten Commandments for Effective Clinical Decision Support"</li>
+<li>Kawamoto et al. (2005) - "Improving clinical practice using CDS systems"</li>
+<li>Sittig & Singh (2012) - "A new sociotechnical model for studying health IT"</li>
+</ul>
+
+<h3>Tools</h3>
+
+<ul>
+<li><strong>Figma:</strong> Prototyping + design system</li>
+<li><strong>Maze:</strong> Remote usability testing</li>
+<li><strong>Hotjar:</strong> Heatmaps & session recordings</li>
+<li><strong>Lighthouse CI:</strong> Performance monitoring</li>
+<li><strong>axe DevTools:</strong> Accessibility testing</li>
+</ul>
+
+<h2>Next Steps per Ambra</h2>
+
+<h3>Immediate (Settimana 1-2)</h3>
+
+<ol>
+<li><strong>Audit UX esistente:</strong> Registra 5 sessioni uso reale (se già in pilot)</li>
+<li><strong>Identifica pain points:</strong> Quali task richiedono >3 click? Dove gli utenti si bloccano?</li>
+<li><strong>Prioritize fixes:</strong> Matrice impatto/sforzo</li>
+<li><strong>Quick wins:</strong> Implementa top 3 fix a basso sforzo</li>
+</ol>
+
+<h3>Short-term (Mese 1)</h3>
+
+<ol>
+<li><strong>Design system:</strong> Setup Radix UI + Tailwind, definisci componenti base</li>
+<li><strong>Formative testing:</strong> 5 medici, think-aloud su task critici</li>
+<li><strong>Iterate:</strong> 2-3 cicli design → test → refine</li>
+<li><strong>Performance baseline:</strong> Lighthouse audit, Web Vitals monitoring</li>
+</ol>
+
+<h3>Mid-term (Mese 2-3)</h3>
+
+<ol>
+<li><strong>Summative testing:</strong> 15+ medici, task success rate, SUS score</li>
+<li><strong>Analytics setup:</strong> Hotjar, Sentry, custom events</li>
+<li><strong>Documentation:</strong> Usability engineering file per MDR</li>
+<li><strong>Training materials:</strong> Video tutorials, quick reference guide</li>
+</ol>
+
+<h3>Long-term (Ongoing)</h3>
+
+<ol>
+<li><strong>A/B testing:</strong> Varianti layout per ottimizzazione continua</li>
+<li><strong>User feedback loop:</strong> Survey trimestrali, NPS tracking</li>
+<li><strong>Accessibility audit:</strong> WCAG 2.1 AA compliance</li>
+<li><strong>Internationalization:</strong> Se target mercati esteri</li>
+</ol>
+
+<h2>Anti-Patterns da Evitare</h2>
+
+<div class="warning">
+<strong>🚫 Errori comuni CDSS UX:</strong>
+
+<ul>
+<li><strong>"Feature creep":</strong> Aggiungere funzioni senza validare uso reale</li>
+<li><strong>"Designer-driven":</strong> UI bella ma non funzionale per workflow clinico</li>
+<li><strong>"Tech-first":</strong> Scegliere stack prima di capire requisiti UX</li>
+<li><strong>"One-size-fits-all":</strong> Stessa UI per PS, ambulatorio, domiciliare</li>
+<li><strong>"Alert fatigue":</strong> Troppi warning → medici li ignorano</li>
+<li><strong>"Black box AI":</strong> Suggerimenti senza spiegazione → no trust</li>
+<li><strong>"Mobile-last":</strong> Medici usano tablet, non solo desktop</li>
+</ul>
+</div>
+
+<h2>Conclusioni</h2>
+
+<p>UX medico per CDSS è un <strong>problema di design sistemico</strong>, non solo estetico.</p>
+
+<p><strong>Principi guida:</strong></p>
+
+<ol>
+<li><strong>Workflow-centric:</strong> Progetta per task, non per utenti generici</li>
+<li><strong>Trust through transparency:</strong> Ogni dato → fonte tracciabile</li>
+<li><strong>Safety by design:</strong> Error prevention > error handling</li>
+<li><strong>Performance is UX:</strong> Latenza &gt;2 sec = frustrazione</li>
+<li><strong>Iterate with users:</strong> 5 medici valgono più di 50 designer</li>
+</ol>
+
+<div class="info">
+<strong>💡 Raccomandazione finale:</strong> Inizia con <strong>1 workflow critico</strong> (es. triage PS), ottimizzalo fino a SUS &gt;80, poi espandi. Non cercare di fare tutto subito.
+</div>
+
+<p style="margin-top: 40px;"><a href="/">← Back to Dashboard</a></p>
+</body>
+</html>
