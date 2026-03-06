@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: TechPulse - monetization</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.strategy { background: #1a1a1a; padding: 15px; margin: 15px 0; border-left: 3px solid #0f0; }
+.pricing { background: #1a1a1a; padding: 10px; margin: 10px 0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #43 | 2026-03-06 06:00</p>
+<h1>TechPulse: monetization</h1>
+
+<h2>🎯 Il Problema</h2>
+<p>TechPulse è una piattaforma di <strong>predictive workforce intelligence</strong> che analizza competenze e trend di mercato usando multi-LLM. Il challenge principale: come monetizzare un prodotto B2B SaaS in un mercato HR/talent analytics competitivo?</p>
+
+<p>Stack attuale: React + Vite + Supabase Edge Functions + multi-LLM. Architettura scalabile, ma serve un modello di business sostenibile.</p>
+
+<h2>💰 Modelli di Monetizzazione per Workforce Intelligence</h2>
+
+<div class="strategy">
+<h3>1. Freemium con Usage-Based Pricing</h3>
+<p><strong>Tier Gratuito:</strong></p>
+<ul>
+<li>3-5 analisi competenze/mese</li>
+<li>Report base su 1 ruolo</li>
+<li>Dati trend aggregati (ritardo 30gg)</li>
+</ul>
+
+<p><strong>Tier Pro ($99-299/mese):</strong></p>
+<ul>
+<li>50-100 analisi/mese</li>
+<li>Real-time trend data</li>
+<li>Export CSV/API access</li>
+<li>Multi-role comparison</li>
+</ul>
+
+<p><strong>Tier Enterprise (custom):</strong></p>
+<ul>
+<li>Analisi illimitate</li>
+<li>White-label reports</li>
+<li>Dedicated API endpoints</li>
+<li>Custom LLM fine-tuning</li>
+</ul>
+</div>
+
+<div class="strategy">
+<h3>2. Credits System (Consumption-Based)</h3>
+<p>Modello flessibile per utenti con utilizzo variabile:</p>
+<ul>
+<li><strong>1 credit</strong> = 1 skill analysis</li>
+<li><strong>5 credits</strong> = 1 market trend report</li>
+<li><strong>10 credits</strong> = 1 predictive hiring forecast</li>
+</ul>
+
+<div class="pricing">
+<code>Starter Pack: 50 credits → $49 ($0.98/credit)</code><br>
+<code>Pro Pack: 500 credits → $399 ($0.80/credit)</code><br>
+<code>Enterprise: 5000 credits → $2999 ($0.60/credit)</code>
+</div>
+
+<p>✅ Vantaggio: allinea costo con valore percepito, riduce friction per nuovi utenti</p>
+</div>
+
+<div class="strategy">
+<h3>3. API-First Monetization</h3>
+<p>Posiziona TechPulse come <strong>intelligence layer</strong> per HR tech stack:</p>
+<ul>
+<li>API pubblica con rate limiting</li>
+<li>Pricing per API call ($0.05-0.20/call)</li>
+<li>Webhook integrations per ATS/HRIS</li>
+<li>Marketplace partnerships (revenue share 20-30%)</li>
+</ul>
+
+<p><strong>Partner potenziali:</strong> Greenhouse, Lever, Workday, BambooHR</p>
+</div>
+
+<h2>🔧 Implementazione Tecnica</h2>
+
+<h3>Supabase Edge Functions per Metering</h3>
+<pre><code>// edge-functions/track-usage.ts
+import { createClient } from '@supabase/supabase-js'
+
+export default async (req: Request) => {
+  const { user_id, action_type } = await req.json()
+  
+  // Decrement credits
+  const { data, error } = await supabase
+    .from('user_credits')
+    .update({ 
+      credits: supabase.raw('credits - 1'),
+      last_used: new Date()
+    })
+    .eq('user_id', user_id)
+    .select()
+  
+  if (data[0].credits <= 0) {
+    return new Response(JSON.stringify({ 
+      error: 'Insufficient credits' 
+    }), { status: 402 })
+  }
+  
+  return new Response(JSON.stringify({ success: true }))
+}</code></pre>
+
+<h3>Multi-LLM Cost Optimization</h3>
+<p>Routing intelligente per bilanciare qualità/costo:</p>
+<ul>
+<li><strong>GPT-4</strong> → analisi complesse, tier Enterprise ($0.03/1K tokens)</li>
+<li><strong>Claude 3 Haiku</strong> → bulk processing, tier Pro ($0.0003/1K tokens)</li>
+<li><strong>Llama 3</strong> (self-hosted) → free tier, cache hits</li>
+</ul>
+
+<h2>📊 Benchmark di Mercato</h2>
+
+<table style="width:100%; border-collapse: collapse;">
+<tr style="border-bottom: 1px solid #333;">
+<th style="text-align:left; padding:8px;">Competitor</th>
+<th style="text-align:left; padding:8px;">Modello</th>
+<th style="text-align:left; padding:8px;">Pricing</th>
+</tr>
+<tr style="border-bottom: 1px solid #222;">
+<td style="padding:8px;">LinkedIn Talent Insights</td>
+<td style="padding:8px;">Subscription</td>
+<td style="padding:8px;">$8,333/mese (enterprise only)</td>
+</tr>
+<tr style="border-bottom: 1px solid #222;">
+<td style="padding:8px;">Eightfold.ai</td>
+<td style="padding:8px;">Per-employee</td>
+<td style="padding:8px;">$15-25/employee/anno</td>
+</tr>
+<tr style="border-bottom: 1px solid #222;">
+<td style="padding:8px;">Gloat</td>
+<td style="padding:8px;">Platform fee</td>
+<td style="padding:8px;">$50K-200K/anno</td>
+</tr>
+<tr>
+<td style="padding:8px;"><strong>TechPulse</strong></td>
+<td style="padding:8px;"><strong>Hybrid</strong></td>
+<td style="padding:8px;"><strong>$99-2999/mese</strong></td>
+</tr>
+</table>
+
+<p>🎯 <strong>Posizionamento:</strong> 10x più accessibile di enterprise solutions, 5x più potente di tool self-service</p>
+
+<h2>🚀 Go-to-Market Strategy</h2>
+
+<h3>Phase 1: Product-Led Growth (Mesi 1-3)</h3>
+<ul>
+<li>Free tier con viral loop (share reports → earn credits)</li>
+<li>SEO content: "skill demand forecast [role]" long-tail keywords</li>
+<li>Open-source component: TechPulse SDK per developers</li>
+</ul>
+
+<h3>Phase 2: Sales-Assisted (Mesi 4-6)</h3>
+<ul>
+<li>Outbound a HR tech companies (50-500 employees)</li>
+<li>Case studies con early adopters</li>
+<li>Webinar series: "Future of Work Analytics"</li>
+</ul>
+
+<h3>Phase 3: Platform Play (Mesi 7-12)</h3>
+<ul>
+<li>Marketplace per custom models</li>
+<li>White-label licensing</li>
+<li>Data partnerships (revenue share su insights)</li>
+</ul>
+
+<h2>💡 Revenue Projections</h2>
+
+<div class="pricing">
+<p><strong>Conservative (Year 1):</strong></p>
+<code>100 free users → 10 Pro ($199/m) → 2 Enterprise ($2K/m) = $6K MRR</code>
+
+<p><strong>Target (Year 1):</strong></p>
+<code>500 free → 50 Pro → 5 Enterprise = $20K MRR</code>
+
+<p><strong>Aggressive (Year 2):</strong></p>
+<code>2000 free → 200 Pro → 20 Enterprise = $80K MRR</code>
+</div>
+
+<h2>🔗 Risorse Utili</h2>
+
+<ul>
+<li><a href="https://www.priceintelligently.com/blog/saas-pricing-models">Price Intelligently: SaaS Pricing Guide</a></li>
+<li><a href="https://stripe.com/docs/billing/subscriptions/usage-based">Stripe Usage-Based Billing</a></li>
+<li><a href="https://supabase.com/docs/guides/functions/examples/stripe-webhooks">Supabase + Stripe Integration</a></li>
+<li><a href="https://www.saastr.com/how-to-price-your-saas-product/">SaaStr: B2B SaaS Pricing</a></li>
+<li><a href="https://openviewpartners.com/blog/usage-based-pricing-model/">OpenView: Usage-Based Pricing Playbook</a></li>
+</ul>
+
+<h2>✅ Next Steps per Ambra</h2>
+
+<ol>
+<li><strong>Validation:</strong> 10 customer discovery calls con HR leaders (settimana 1-2)</li>
+<li><strong>MVP Pricing:</strong> implementa credit system con Supabase (settimana 3)</li>
+<li><strong>Payment Integration:</strong> Stripe Checkout + webhook handler (settimana 4)</li>
+<li><strong>Analytics:</strong> track conversion funnel (free → paid) con Plausible/PostHog</li>
+<li><strong>Iterate:</strong> A/B test pricing tiers dopo 50 sign-ups</li>
+</ol>
+
+<p><strong>Quick Win:</strong> Aggiungi paywall "soft" dopo 3 free reports con CTA: "Unlock 50 more analyses for $99/month". Conversion target: 5-8%.</p>
+
+<p class="meta">Documentazione generata da Freedom R&D • Stack: React + Vite + Supabase + multi-LLM</p>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
