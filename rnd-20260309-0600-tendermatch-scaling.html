@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: TenderMatch - scaling</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #331a00; border-left: 3px solid #ff6600; padding: 10px; margin: 15px 0; }
+.solution { background: #1a2a1a; border-left: 3px solid #0f0; padding: 10px; margin: 15px 0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #45 | 2026-03-09 06:00</p>
+<h1>TenderMatch: scaling</h1>
+
+<h2>Il Problema</h2>
+<p>TenderMatch è un compliance engine per gare pubbliche che deve gestire:</p>
+<ul>
+<li><strong>Volume di bandi</strong>: migliaia di documenti al giorno da analizzare</li>
+<li><strong>Complessità AI</strong>: analisi semantica profonda di documenti tecnici/legali</li>
+<li><strong>Latenza critica</strong>: notifiche real-time per scadenze imminenti</li>
+<li><strong>Multi-tenancy</strong>: isolamento dati tra clienti enterprise</li>
+</ul>
+
+<div class="warning">
+<strong>Collo di bottiglia principale:</strong> Lo stack attuale (Lovable + Express + Railway) non è progettato per workload asincroni pesanti. L'AI processing sincronizzato con le richieste HTTP crea timeout e degrado delle performance.
+</div>
+
+<h2>Architettura Attuale vs Scalabile</h2>
+
+<h3>Stack Attuale (Problematico)</h3>
+<pre><code>User Request → Express → AI Analysis → Response
+                ↓
+            Timeout (>30s)
+</code></pre>
+
+<h3>Architettura Target</h3>
+<pre><code>Ingestion Layer (Railway Workers)
+    ↓
+Message Queue (Redis/BullMQ)
+    ↓
+AI Processing Pool (Horizontal scaling)
+    ↓
+Supabase (Storage + Real-time notifications)
+    ↓
+Frontend (Lovable + WebSockets)
+</code></pre>
+
+<h2>Soluzioni Concrete</h2>
+
+<div class="solution">
+<h3>1. Queue-Based Processing</h3>
+<p><strong>Stack:</strong> BullMQ + Redis (Railway addon)</p>
+<pre><code>// worker.js
+import { Queue, Worker } from 'bullmq';
+
+const tenderQueue = new Queue('tender-analysis', {
+  connection: process.env.REDIS_URL
+});
+
+const worker = new Worker('tender-analysis', async job => {
+  const { tenderId, documentUrl } = job.data;
+  
+  // AI analysis asincrona
+  const result = await analyzeWithAI(documentUrl);
+  
+  // Store in Supabase
+  await supabase.from('tenders')
+    .update({ analysis: result })
+    .eq('id', tenderId);
+    
+  // Notifica real-time
+  await supabase.channel('tender-updates')
+    .send({ type: 'analysis_complete', tenderId });
+});
+</code></pre>
+</div>
+
+<div class="solution">
+<h3>2. Horizontal Scaling su Railway</h3>
+<p>Railway supporta replica scaling:</p>
+<pre><code># railway.json
+{
+  "services": {
+    "api": {
+      "replicas": 3,
+      "healthcheck": "/health"
+    },
+    "worker": {
+      "replicas": 5,
+      "command": "node worker.js"
+    }
+  }
+}
+</code></pre>
+<p><strong>Costo stimato:</strong> ~$50-100/mese per 5 worker instances</p>
+</div>
+
+<div class="solution">
+<h3>3. Database Optimization (Supabase)</h3>
+<pre><code>-- Partitioning per tenant
+CREATE TABLE tenders_partitioned (
+  id UUID,
+  tenant_id UUID,
+  data JSONB,
+  created_at TIMESTAMPTZ
+) PARTITION BY LIST (tenant_id);
+
+-- Index per query frequenti
+CREATE INDEX idx_tenders_status 
+ON tenders(status, created_at DESC) 
+WHERE status IN ('pending', 'analyzing');
+
+-- Materialized view per analytics
+CREATE MATERIALIZED VIEW tender_stats AS
+SELECT tenant_id, 
+       COUNT(*) as total,
+       AVG(processing_time) as avg_time
+FROM tenders
+GROUP BY tenant_id;
+</code></pre>
+</div>
+
+<div class="solution">
+<h3>4. Caching Strategico</h3>
+<pre><code>// Redis cache per risultati AI comuni
+const getCachedAnalysis = async (documentHash) => {
+  const cached = await redis.get(`analysis:${documentHash}`);
+  if (cached) return JSON.parse(cached);
+  
+  const result = await runAIAnalysis(document);
+  await redis.setex(`analysis:${documentHash}`, 3600, JSON.stringify(result));
+  return result;
+};
+</code></pre>
+</div>
+
+<h2>Migration Path</h2>
+
+<h3>Fase 1: Quick Wins (1-2 settimane)</h3>
+<ol>
+<li>Implementare BullMQ per AI processing</li>
+<li>Aggiungere Redis caching (Railway addon: $10/mese)</li>
+<li>Ottimizzare query Supabase esistenti</li>
+<li>Implementare rate limiting per proteggere l'infra</li>
+</ol>
+
+<h3>Fase 2: Scaling Infra (2-4 settimane)</h3>
+<ol>
+<li>Separare worker processes da API server</li>
+<li>Configurare auto-scaling su Railway</li>
+<li>Implementare database partitioning</li>
+<li>Setup monitoring (Sentry + Railway metrics)</li>
+</ol>
+
+<h3>Fase 3: Advanced (1-2 mesi)</h3>
+<ol>
+<li>Microservices per AI processing (se necessario)</li>
+<li>CDN per documenti statici (Cloudflare R2)</li>
+<li>Multi-region deployment per latency</li>
+</ol>
+
+<h2>Risorse Utili</h2>
+
+<h3>Documentation</h3>
+<ul>
+<li><a href="https://docs.bullmq.io/">BullMQ Docs</a> - Queue management</li>
+<li><a href="https://docs.railway.app/deploy/scaling">Railway Scaling Guide</a></li>
+<li><a href="https://supabase.com/docs/guides/database/postgres/partitions">Supabase Partitioning</a></li>
+<li><a href="https://redis.io/docs/manual/patterns/distributed-locks/">Redis Distributed Locks</a> - Per job deduplication</li>
+</ul>
+
+<h3>Tools & Monitoring</h3>
+<ul>
+<li><a href="https://github.com/OptimalBits/bull-board">Bull Board</a> - Queue monitoring UI</li>
+<li><a href="https://betterstack.com/">Better Stack</a> - Uptime monitoring (free tier)</li>
+<li><a href="https://www.pganalyze.com/">pganalyze</a> - PostgreSQL performance</li>
+</ul>
+
+<h3>Case Studies</h3>
+<ul>
+<li><a href="https://railway.app/blog/scaling-to-millions">Railway: Scaling to Millions</a></li>
+<li><a href="https://supabase.com/blog/postgres-performance">Supabase Performance Best Practices</a></li>
+</ul>
+
+<h2>Costi Stimati (Scaling Target)</h2>
+
+<table style="width:100%; border-collapse: collapse;">
+<tr style="border-bottom: 1px solid #333;">
+<th style="text-align:left; padding: 8px;">Servizio</th>
+<th style="text-align:right; padding: 8px;">Costo/mese</th>
+</tr>
+<tr>
+<td style="padding: 8px;">Railway (API + 5 workers)</td>
+<td style="text-align:right; padding: 8px;">$80</td>
+</tr>
+<tr>
+<td style="padding: 8px;">Supabase Pro</td>
+<td style="text-align:right; padding: 8px;">$25</td>
+</tr>
+<tr>
+<td style="padding: 8px;">Redis (Railway addon)</td>
+<td style="text-align:right; padding: 8px;">$10</td>
+</tr>
+<tr>
+<td style="padding: 8px;">Monitoring (Better Stack)</td>
+<td style="text-align:right; padding: 8px;">$0 (free)</td>
+</tr>
+<tr style="border-top: 1px solid #0f0; font-weight: bold;">
+<td style="padding: 8px;">TOTALE</td>
+<td style="text-align:right; padding: 8px;">~$115</td>
+</tr>
+</table>
+
+<h2>Next Steps per Ambra</h2>
+
+<div class="solution">
+<h3>Immediate Actions (Questa settimana)</h3>
+<ol>
+<li><strong>Audit performance attuale:</strong> Identificare endpoint più lenti con Railway metrics</li>
+<li><strong>Setup Redis:</strong> Aggiungere Redis addon su Railway ($10/mese)</li>
+<li><strong>Prototipo queue:</strong> Implementare BullMQ per 1-2 job critici</li>
+<li><strong>Database profiling:</strong> Analizzare slow queries in Supabase dashboard</li>
+</ol>
+
+<h3>Decisioni Architetturali</h3>
+<ul>
+<li>Valutare se separare completamente worker tier (consigliato se >1000 bandi/giorno)</li>
+<li>Decidere strategia multi-tenant: schema separati vs row-level security</li>
+<li>Pianificare migrazione dati se necessario partitioning</li>
+</ul>
+
+<h3>Code Review Priorities</h3>
+<ul>
+<li>Identificare chiamate AI sincrone da convertire in async</li>
+<li>Ottimizzare query N+1 in Express routes</li>
+<li>Implementare connection pooling per PostgreSQL</li>
+</ul>
+</div>
+
+<h2>Metriche da Monitorare</h2>
+<ul>
+<li><strong>P95 latency</strong> API endpoints (target: <500ms)</li>
+<li><strong>Queue depth</strong> BullMQ (alert se >100 pending jobs)</li>
+<li><strong>AI processing time</strong> per documento (target: <30s)</li>
+<li><strong>Database connection pool</strong> utilization (max 80%)</li>
+<li><strong>Memory usage</strong> worker processes (alert se >80%)</li>
+</ul>
+
+<p class="meta">Documento generato da Freedom R&D | Iteration #45</p>
+<p><a href="/">← Back</a></p>
+</body>
+</html>
