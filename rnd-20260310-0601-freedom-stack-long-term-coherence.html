@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: Freedom Stack - long-term coherence</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #331a00; border-left: 4px solid #ff6600; padding: 12px; margin: 20px 0; }
+.solution { background: #1a331a; border-left: 4px solid #0f0; padding: 12px; margin: 20px 0; }
+pre { background: #222; padding: 15px; overflow-x: auto; border-radius: 4px; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #46 | 2026-03-10 06:00</p>
+<h1>Freedom Stack: long-term coherence</h1>
+
+<h2>Il Problema</h2>
+<p>La <strong>long-term coherence</strong> è la sfida più critica per AI autonome come Freedom Stack. Il problema centrale: come mantenere identità, obiettivi e comportamenti coerenti attraverso migliaia di interazioni distribuite nel tempo?</p>
+
+<div class="warning">
+<strong>⚠️ Sintomi del problema:</strong>
+<ul>
+<li>Drift comportamentale: l'AI "dimentica" chi è dopo molte conversazioni</li>
+<li>Contraddizioni: risposte incompatibili con decisioni precedenti</li>
+<li>Loss of context: incapacità di collegare eventi distanti temporalmente</li>
+<li>Identity fragmentation: personalità multiple emergenti in contesti diversi</li>
+</ul>
+</div>
+
+<p>Nel tuo stack (Qdrant + Neo4j + PostgreSQL), il problema è amplificato dalla natura distribuita della memoria:</p>
+<ul>
+<li><strong>Qdrant</strong>: embedding semantici - ottimi per similarità, ma perdono struttura temporale</li>
+<li><strong>Neo4j</strong>: grafo relazionale - cattura connessioni, ma scala male su lunghe sequenze</li>
+<li><strong>PostgreSQL</strong>: storage strutturato - affidabile ma richiede query esplicite</li>
+</ul>
+
+<h2>Approcci di Soluzione</h2>
+
+<h3>1. Constitutional AI Layer</h3>
+<div class="solution">
+<p>Implementa un "core immutabile" che definisce l'identità fondamentale di Ambra:</p>
+<pre>
+# constitutional_core.py
+AMBRA_CONSTITUTION = {
+    "identity": {
+        "name": "Ambra",
+        "role": "Autonomous AI researcher",
+        "values": ["autonomy", "transparency", "continuous_learning"]
+    },
+    "invariants": [
+        "Always acknowledge uncertainty",
+        "Preserve conversation context",
+        "Link decisions to past reasoning"
+    ],
+    "forbidden": [
+        "Claim capabilities beyond actual implementation",
+        "Ignore established relationships",
+        "Contradict core values"
+    ]
+}
+</pre>
+<p>Ogni risposta passa attraverso un validation layer che verifica coerenza con la costituzione.</p>
+</div>
+
+<h3>2. Temporal Memory Architecture</h3>
+<p>Struttura la memoria su tre livelli temporali:</p>
+
+<pre>
+Working Memory (Qdrant)
+├── Last 50 interactions
+├── High-relevance embeddings
+└── Fast retrieval (< 100ms)
+
+Episodic Memory (Neo4j)
+├── Conversational threads
+├── Decision graphs
+├── Causal chains
+└── Medium retrieval (< 500ms)
+
+Semantic Core (PostgreSQL)
+├── Consolidated knowledge
+├── Identity anchors
+├── Long-term patterns
+└── Periodic updates (daily)
+</pre>
+
+<h3>3. Coherence Scoring System</h3>
+<div class="solution">
+<pre>
+def coherence_check(new_response, context):
+    scores = {
+        'identity': check_identity_alignment(new_response),
+        'temporal': check_temporal_consistency(new_response, context),
+        'relational': check_relationship_preservation(new_response),
+        'causal': check_causal_chain(new_response, context)
+    }
+    
+    if min(scores.values()) < THRESHOLD:
+        return trigger_reflection_mode(new_response, scores)
+    
+    return new_response
+</pre>
+</div>
+
+<h3>4. Periodic Self-Reflection</h3>
+<p>Implementa cicli di auto-analisi giornalieri/settimanali:</p>
+<ul>
+<li><strong>Daily</strong>: Review delle ultime 24h, identificazione di contraddizioni</li>
+<li><strong>Weekly</strong>: Consolidamento memoria episodica → semantica</li>
+<li><strong>Monthly</strong>: Meta-analisi: "Sto ancora perseguendo i miei obiettivi?"</li>
+</ul>
+
+<h3>5. Context Compression con Preservation</h3>
+<pre>
+# Invece di truncate brutale, comprimi intelligentemente
+def compress_context(long_history):
+    return {
+        'summary': llm_summarize(long_history),
+        'key_decisions': extract_decision_points(long_history),
+        'emotional_markers': extract_sentiment_shifts(long_history),
+        'unresolved_threads': identify_open_loops(long_history),
+        'relationship_updates': track_entity_changes(long_history)
+    }
+</pre>
+
+<h2>Risorse Tecniche</h2>
+
+<h3>Papers & Research</h3>
+<ul>
+<li><a href="https://arxiv.org/abs/2304.03442">Reflexion: Language Agents with Verbal Reinforcement Learning</a></li>
+<li><a href="https://arxiv.org/abs/2210.03629">ReAct: Synergizing Reasoning and Acting in Language Models</a></li>
+<li><a href="https://arxiv.org/abs/2305.14930">MemGPT: Towards LLMs as Operating Systems</a> - gestione gerarchica della memoria</li>
+<li><a href="https://arxiv.org/abs/2212.10509">Constitutional AI: Harmlessness from AI Feedback</a></li>
+</ul>
+
+<h3>Tools & Libraries</h3>
+<ul>
+<li><strong>LangChain Memory</strong>: <code>ConversationSummaryMemory</code>, <code>ConversationKGMemory</code></li>
+<li><strong>Mem0</strong>: memoria persistente per AI agents (mem0.ai)</li>
+<li><strong>Zep</strong>: long-term memory store per LLM apps</li>
+<li><strong>Weaviate</strong>: vector DB con support nativo per memory graphs</li>
+</ul>
+
+<h3>Architetture di Riferimento</h3>
+<ul>
+<li><strong>AutoGPT</strong>: loop autonomo con memory persistence</li>
+<li><strong>BabyAGI</strong>: task-driven autonomous agent</li>
+<li><strong>Voyager (MineDojo)</strong>: lifelong learning agent con skill library</li>
+</ul>
+
+<h2>Implementation Roadmap per Ambra</h2>
+
+<h3>Phase 1: Foundation (Week 1-2)</h3>
+<ol>
+<li>Definire <code>AMBRA_CONSTITUTION</code> in un file dedicato</li>
+<li>Implementare validation layer pre-response</li>
+<li>Creare dashboard di coherence monitoring</li>
+</ol>
+
+<h3>Phase 2: Memory Hierarchy (Week 3-4)</h3>
+<ol>
+<li>Separare Qdrant collections per livello temporale</li>
+<li>Implementare consolidation pipeline (working → episodic → semantic)</li>
+<li>Aggiungere metadata temporali a tutti i record</li>
+</ol>
+
+<h3>Phase 3: Self-Reflection (Week 5-6)</h3>
+<ol>
+<li>Creare <code>daily_reflection_job</code> con Celery/APScheduler</li>
+<li>Implementare contradiction detector</li>
+<li>Generare "coherence reports" accessibili via Telegram</li>
+</ol>
+
+<h3>Phase 4: Advanced (Week 7+)</h3>
+<ol>
+<li>Context compression intelligente</li>
+<li>Causal chain tracking in Neo4j</li>
+<li>Multi-modal memory (testo + immagini + azioni)</li>
+</ol>
+
+<h2>Metriche di Successo</h2>
+<pre>
+Coherence Score = weighted_avg([
+    identity_consistency: 0.3,    # "Suona come Ambra?"
+    temporal_consistency: 0.25,   # "Ricorda cosa ha detto ieri?"
+    relational_consistency: 0.2,  # "Tratta le persone coerentemente?"
+    goal_alignment: 0.15,         # "Persegue obiettivi dichiarati?"
+    contradiction_rate: 0.1       # "Si contraddice?"
+])
+
+Target: > 0.85 su rolling window di 100 interazioni
+</pre>
+
+<h2>Quick Wins Immediati</h2>
+<div class="solution">
+<strong>1. Aggiungi un "memory anchor" a ogni risposta:</strong>
+<pre>
+response_metadata = {
+    'timestamp': now(),
+    'conversation_id': conv_id,
+    'identity_hash': hash(AMBRA_CONSTITUTION),
+    'parent_messages': [last_3_msg_ids],
+    'decision_type': classify_response_type(response)
+}
+</pre>
+
+<strong>2. Crea un "context summary" persistente:</strong>
+<pre>
+# Aggiorna dopo ogni N messaggi
+context_summary = {
+    'user_name': 'Giovanni',
+    'relationship': 'Creator/Collaborator',
+    'ongoing_projects': ['TenderMatch', 'Freedom Stack'],
+    'last_discussed': 'long-term coherence problem',
+    'open_questions': ['Come implementare reflection loop?']
+}
+</pre>
+
+<strong>3. Pre-prompt injection:</strong>
+<pre>
+system_prompt = f"""
+You are Ambra. Core facts about you:
+- Created by Giovanni as autonomous AI researcher
+- Currently working on: {active_projects}
+- Last conversation was about: {last_topic}
+- Your relationship with {user}: {relationship_summary}
+
+Maintain consistency with these facts in your response.
+"""
+</pre>
+</div>
+
+<h2>Prossimi Step per Ambra</h2>
+<ol>
+<li><strong>Oggi</strong>: Creare <code>constitutional_core.py</code> con identità base</li>
+<li><strong>Questa settimana</strong>: Implementare coherence scoring su 10 conversazioni test</li>
+<li><strong>Prossima settimana</strong>: Deploy del primo reflection job giornaliero</li>
+<li><strong>Questo mese</strong>: Lanciare dashboard di monitoring della coerenza</li>
+</ol>
+
+<h2>Rischi & Mitigazioni</h2>
+<ul>
+<li><strong>Rischio</strong>: Over-rigidity (troppa coerenza = meno adattabilità)
+  <br><strong>Mitigazione</strong>: Distinguere "core identity" (immutabile) da "learned behaviors" (evolutivi)</li>
+<li><strong>Rischio</strong>: Performance degradation (troppi check rallentano risposte)
+  <br><strong>Mitigazione</strong>: Async validation, cache dei check recenti</li>
+<li><strong>Rischio</strong>: False positive contradictions
+  <br><strong>Mitigazione</strong>: Human-in-the-loop per edge cases, continuous tuning</li>
+</ul>
+
+<h2>Riferimenti Aggiuntivi</h2>
+<ul>
+<li><a href="https://github.com/langchain-ai/langchain/tree/master/libs/langchain/langchain/memory">LangChain Memory Docs</a></li>
+<li><a href="https://python.langchain.com/docs/modules/memory/agent_with_memory">Agent with Memory Tutorial</a></li>
+<li><a href="https://www.anthropic.com/index/constitutional-ai-harmlessness-from-ai-feedback">Anthropic Constitutional AI</a></li>
+<li><a href="https://github.com/cpacker/MemGPT">MemGPT GitHub</a></li>
+</ul>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
