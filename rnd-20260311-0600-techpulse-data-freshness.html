@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: TechPulse - data freshness</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #332200; border-left: 3px solid #ff0; padding: 10px; margin: 20px 0; }
+.solution { background: #002200; border-left: 3px solid #0f0; padding: 10px; margin: 20px 0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #47 | 2026-03-11 06:00</p>
+<h1>TechPulse: data freshness</h1>
+
+<h2>Il Problema</h2>
+<p>TechPulse è un sistema di predictive workforce intelligence che analizza competenze e trend di mercato. Il problema critico è <strong>data freshness</strong>: le previsioni sono valide solo se basate su dati aggiornati.</p>
+
+<div class="warning">
+<strong>⚠️ Challenge:</strong> Nel tech, le competenze emergono e diventano obsolete in mesi. Dati vecchi di 6 mesi possono portare a raccomandazioni completamente sbagliate.
+</div>
+
+<p>Problemi specifici:</p>
+<ul>
+<li><strong>LLM knowledge cutoff</strong>: i modelli hanno dati fino a una certa data</li>
+<li><strong>Job market velocity</strong>: nuove tecnologie emergono costantemente (es. AI agents, edge computing)</li>
+<li><strong>Skill demand shifts</strong>: la domanda cambia rapidamente (es. TypeScript vs JavaScript)</li>
+<li><strong>Cache invalidation</strong>: quando aggiornare le analisi senza sprecare risorse?</li>
+</ul>
+
+<h2>Approcci Comuni</h2>
+
+<h3>1. Real-time Data Pipelines</h3>
+<div class="solution">
+<strong>Soluzione:</strong> Ingestione continua da fonti fresche
+</div>
+<p>Architettura:</p>
+<pre><code>Job Boards (LinkedIn, Indeed) 
+    ↓ scraping/API
+GitHub Trends API
+    ↓ daily sync
+Tech News RSS feeds
+    ↓ real-time
+Supabase Edge Functions
+    ↓ processing
+PostgreSQL + vector embeddings
+    ↓
+React UI (Vite)</code></pre>
+
+<p>Tools:</p>
+<ul>
+<li><code>Supabase Realtime</code> per update istantanei</li>
+<li><code>pg_cron</code> per job scheduling in PostgreSQL</li>
+<li><code>Temporal.io</code> per workflow orchestration</li>
+</ul>
+
+<h3>2. Hybrid LLM Strategy</h3>
+<div class="solution">
+<strong>Soluzione:</strong> Combinare modelli con diversi punti di forza
+</div>
+<p>Pattern multi-LLM:</p>
+<ul>
+<li><strong>GPT-4</strong>: analisi profonda, reasoning complesso (dati fino a Apr 2023)</li>
+<li><strong>Claude 3</strong>: contestualizzazione, dati più recenti (Aug 2023)</li>
+<li><strong>Perplexity API</strong>: search-augmented, dati real-time dal web</li>
+<li><strong>Custom RAG</strong>: tuo database vettoriale con dati proprietari fresh</li>
+</ul>
+
+<p>Implementazione in Supabase Edge Functions:</p>
+<pre><code>async function getSkillAnalysis(skill: string) {
+  // 1. Query fresh data from your DB
+  const recentJobs = await supabase
+    .from('job_postings')
+    .select('*')
+    .gte('posted_at', new Date(Date.now() - 7*24*60*60*1000))
+    .contains('skills', [skill]);
+  
+  // 2. Augment with real-time web search
+  const webContext = await perplexity.search(
+    `${skill} job demand trends 2026`
+  );
+  
+  // 3. LLM synthesis
+  const analysis = await openai.chat.completions.create({
+    model: 'gpt-4',
+    messages: [{
+      role: 'system',
+      content: 'You analyze tech skill trends. Use ONLY the provided fresh data.'
+    }, {
+      role: 'user',
+      content: `Recent jobs: ${JSON.stringify(recentJobs)}
+                 Web trends: ${webContext}
+                 Analyze ${skill} demand.`
+    }]
+  });
+  
+  return analysis;
+}</code></pre>
+
+<h3>3. Incremental Refresh Strategy</h3>
+<div class="solution">
+<strong>Soluzione:</strong> Smart caching con invalidazione granulare
+</div>
+<p>Strategia:</p>
+<ul>
+<li><strong>Hot data</strong> (top 50 skills): refresh ogni 24h</li>
+<li><strong>Warm data</strong> (top 500): refresh ogni settimana</li>
+<li><strong>Cold data</strong> (long tail): on-demand con cache 30 giorni</li>
+<li><strong>Event-driven</strong>: invalidazione immediata su breaking news (es. nuovo framework major release)</li>
+</ul>
+
+<p>Redis/Upstash pattern:</p>
+<pre><code>// Cache key con timestamp
+const cacheKey = `skill:${skillId}:${Math.floor(Date.now() / 86400000)}`;
+
+// TTL basato su popularity
+const ttl = skillPopularity > 1000 ? 3600 : 86400;</code></pre>
+
+<h3>4. Crowd-sourced Signals</h3>
+<div class="solution">
+<strong>Soluzione:</strong> Feedback loop dagli utenti
+</div>
+<p>Meccanismi:</p>
+<ul>
+<li>User voting su accuracy delle previsioni</li>
+<li>Segnalazione skill emergenti</li>
+<li>Company-reported hiring data (se hai partnership)</li>
+<li>Developer survey integration (Stack Overflow, JetBrains)</li>
+</ul>
+
+<h2>Risorse Utili</h2>
+
+<h3>Data Sources</h3>
+<ul>
+<li><a href="https://github.com/trending">GitHub Trending</a> - repository popularity real-time</li>
+<li><a href="https://www.linkedin.com/talent/skills">LinkedIn Talent Insights</a> - skill demand data</li>
+<li><a href="https://insights.stackoverflow.com/trends">Stack Overflow Trends</a> - developer interest</li>
+<li><a href="https://www.npmtrends.com/">NPM Trends</a> - package adoption metrics</li>
+<li><a href="https://pypi.org/stats/">PyPI Stats</a> - Python package downloads</li>
+</ul>
+
+<h3>Tools & Libraries</h3>
+<ul>
+<li><a href="https://docs.temporal.io/">Temporal</a> - workflow orchestration per data pipelines</li>
+<li><a href="https://supabase.com/docs/guides/realtime">Supabase Realtime</a> - live data sync</li>
+<li><a href="https://upstash.com/">Upstash Redis</a> - serverless caching</li>
+<li><a href="https://www.pinecone.io/">Pinecone</a> o <a href="https://qdrant.tech/">Qdrant</a> - vector DB per RAG</li>
+<li><a href="https://www.firecrawl.dev/">Firecrawl</a> - web scraping as API</li>
+</ul>
+
+<h3>Patterns</h3>
+<ul>
+<li><a href="https://arxiv.org/abs/2005.11401">RAG (Retrieval-Augmented Generation)</a> - paper fondamentale</li>
+<li><a href="https://python.langchain.com/docs/use_cases/question_answering/">LangChain RAG tutorial</a></li>
+<li><a href="https://vercel.com/blog/ai-sdk-3-generative-ui">Vercel AI SDK</a> - streaming UI updates</li>
+</ul>
+
+<h2>Prossimi Step per Ambra</h2>
+
+<h3>Immediate (questa settimana)</h3>
+<ol>
+<li><strong>Audit data sources</strong>: quali usi ora? Quanto sono fresh?</li>
+<li><strong>Implementa basic caching</strong>: Redis con TTL 24h per le query più comuni</li>
+<li><strong>Add timestamp tracking</strong>: ogni dato deve avere <code>fetched_at</code> e <code>source</code></li>
+</ol>
+
+<h3>Short-term (2-4 settimane)</h3>
+<ol>
+<li><strong>Setup Supabase Edge Function</strong> per daily scraping:
+<pre><code>// supabase/functions/sync-job-data/index.ts
+Deno.serve(async (req) => {
+  const jobs = await fetchFromLinkedIn();
+  const skills = extractSkills(jobs);
+  await supabase.from('skills_trending').upsert(skills);
+  return new Response('OK');
+});</code></pre>
+</li>
+<li><strong>Integrate Perplexity API</strong> per real-time web context</li>
+<li><strong>Build freshness indicator</strong> nella UI: mostra agli utenti l'età dei dati</li>
+</ol>
+
+<h3>Long-term (Q2 2026)</h3>
+<ol>
+<li><strong>Event-driven architecture</strong>: webhook da GitHub, npm, PyPI per instant updates</li>
+<li><strong>Predictive refresh</strong>: ML model che prevede quali skill richiederanno update</li>
+<li><strong>User feedback loop</strong>: "Questi dati sono accurati?" → training signal</li>
+</ol>
+
+<h3>Metriche da Trackare</h3>
+<ul>
+<li><strong>Data age</strong>: media età dei dati usati per ogni previsione</li>
+<li><strong>Cache hit rate</strong>: % query servite da cache vs fresh fetch</li>
+<li><strong>Prediction accuracy</strong>: confronto previsioni vs dati reali dopo 30/60/90 giorni</li>
+<li><strong>User trust score</strong>: feedback utenti su accuratezza</li>
+</ul>
+
+<div class="warning">
+<strong>💡 Key Insight:</strong> Per TechPulse, "fresh" non significa "real-time" per tutto. Serve una strategia tiered: hot data (daily), warm (weekly), cold (monthly). Il vero valore è nel <strong>saper combinare</strong> dati storici (pattern) con segnali freschi (anomalie).
+</div>
+
+<h2>Domande per Ambra</h2>
+<ol>
+<li>Quali sono le 3 skill più richieste dai tuoi utenti? (focus su quelle per MVP)</li>
+<li>Hai già partnership con job boards o accesso a API?</li>
+<li>Budget LLM mensile? (determina quante query real-time puoi fare)</li>
+<li>Utenti preferiscono accuratezza o velocità? (trade-off caching)</li>
+</ol>
+
+<p class="meta">Next R&D iteration: TechPulse monetization strategy</p>
+<p><a href="/">← Back</a></p>
+</body>
+</html>
