@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: Euryst - memory persistence</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+pre { background: #222; padding: 15px; overflow-x: auto; border-left: 3px solid #0f0; }
+.warning { background: #332200; padding: 10px; border-left: 3px solid #ff0; }
+.solution { background: #002200; padding: 10px; border-left: 3px solid #0f0; margin: 15px 0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #48 | 2026-03-12 06:00</p>
+<h1>Euryst: Memory Persistence</h1>
+
+<h2>Il Problema</h2>
+<p>Euryst è un AI agent WhatsApp che deve mantenere un <strong>layer cognitivo persistente</strong> per founder. Il problema centrale è: <strong>come memorizzare e recuperare conversazioni, contesto e insights in modo efficiente su WhatsApp?</strong></p>
+
+<div class="warning">
+<strong>⚠️ Sfide specifiche:</strong>
+<ul>
+<li>WhatsApp Business API è stateless per design</li>
+<li>Ogni messaggio è un evento isolato senza contesto automatico</li>
+<li>Serve memoria a lungo termine (conversazioni passate)</li>
+<li>Serve memoria a breve termine (contesto conversazione corrente)</li>
+<li>Serve memoria semantica (pattern, insights, preferenze utente)</li>
+</ul>
+</div>
+
+<h2>Architettura Memory Persistence per AI Agents</h2>
+
+<h3>1. Layer di Memoria (Memory Layers)</h3>
+
+<div class="solution">
+<strong>Short-term Memory (STM)</strong>
+<pre>
+// Redis/Memcached per sessione attiva
+{
+  "session_id": "wa_user_39123456789",
+  "messages": [...last 10 messages],
+  "context": {
+    "topic": "fundraising",
+    "mood": "focused",
+    "last_interaction": "2026-03-12T05:45:00Z"
+  },
+  "ttl": 3600 // 1 ora
+}
+</pre>
+</div>
+
+<div class="solution">
+<strong>Long-term Memory (LTM)</strong>
+<pre>
+// PostgreSQL/Supabase per storage permanente
+CREATE TABLE conversations (
+  id UUID PRIMARY KEY,
+  user_phone VARCHAR(20),
+  timestamp TIMESTAMPTZ,
+  message_type VARCHAR(10), -- 'user' | 'agent'
+  content TEXT,
+  embedding VECTOR(1536), -- per semantic search
+  metadata JSONB
+);
+
+CREATE INDEX idx_user_time ON conversations(user_phone, timestamp DESC);
+CREATE INDEX idx_embedding ON conversations USING ivfflat (embedding vector_cosine_ops);
+</pre>
+</div>
+
+<div class="solution">
+<strong>Semantic Memory (Knowledge Graph)</strong>
+<pre>
+// Neo4j o PostgreSQL JSONB per relazioni
+{
+  "user_id": "founder_123",
+  "profile": {
+    "company": "StartupX",
+    "stage": "seed",
+    "pain_points": ["hiring", "product-market-fit"],
+    "goals": ["raise_series_a", "reach_1m_arr"]
+  },
+  "insights": [
+    {"topic": "fundraising", "learned_at": "2026-02-15", "confidence": 0.89},
+    {"topic": "team_building", "learned_at": "2026-03-01", "confidence": 0.76}
+  ]
+}
+</pre>
+</div>
+
+<h2>Stack Tecnologico Consigliato</h2>
+
+<h3>Opzione A: Supabase-based (raccomandato per Euryst)</h3>
+<pre>
+┌─────────────────┐
+│ WhatsApp Cloud  │
+│     API         │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Webhook        │
+│  (Edge Function)│
+└────────┬────────┘
+         │
+    ┌────┴─────┐
+    │          │
+    ▼          ▼
+┌─────────┐ ┌──────────────┐
+│ Redis   │ │ PostgreSQL   │
+│ (STM)   │ │ + pgvector   │
+│         │ │ (LTM)        │
+└─────────┘ └──────────────┘
+    │          │
+    └────┬─────┘
+         ▼
+    ┌─────────────┐
+    │ LLM Agent   │
+    │ (Claude API)│
+    └─────────────┘
+</pre>
+
+<strong>Componenti:</strong>
+<ul>
+<li><code>Supabase PostgreSQL</code> - storage conversazioni + pgvector per embeddings</li>
+<li><code>Supabase Edge Functions</code> - webhook WhatsApp + orchestrazione</li>
+<li><code>Upstash Redis</code> - cache sessioni attive (STM)</li>
+<li><code>OpenAI/Voyage AI</code> - generazione embeddings</li>
+<li><code>Anthropic Claude</code> - LLM con context window 200k</li>
+</ul>
+
+<h3>Opzione B: Specialized Memory Stack</h3>
+<pre>
+- <strong>Mem0</strong> (mem0.ai) - memory layer as-a-service per AI agents
+- <strong>Zep</strong> (getzep.com) - long-term memory store per LLM apps
+- <strong>LangChain Memory</strong> - built-in memory modules
+</pre>
+
+<h2>Implementazione Pratica</h2>
+
+<h3>1. Schema Database (Supabase)</h3>
+<pre>
+-- Conversazioni
+CREATE TABLE wa_messages (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_phone VARCHAR(20) NOT NULL,
+  direction VARCHAR(10) NOT NULL, -- 'inbound' | 'outbound'
+  content TEXT NOT NULL,
+  timestamp TIMESTAMPTZ DEFAULT NOW(),
+  embedding VECTOR(1536),
+  metadata JSONB DEFAULT '{}'::jsonb
+);
+
+-- Profili utente (semantic memory)
+CREATE TABLE user_profiles (
+  phone VARCHAR(20) PRIMARY KEY,
+  profile JSONB NOT NULL,
+  insights JSONB DEFAULT '[]'::jsonb,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Sessioni attive (per context window)
+CREATE TABLE active_sessions (
+  phone VARCHAR(20) PRIMARY KEY,
+  context JSONB NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+
+-- Indexes
+CREATE INDEX idx_messages_user_time ON wa_messages(user_phone, timestamp DESC);
+CREATE INDEX idx_messages_embedding ON wa_messages USING ivfflat (embedding vector_cosine_ops);
+</pre>
+
+<h3>2. Edge Function - Message Handler</h3>
+<pre>
+// supabase/functions/whatsapp-webhook/index.ts
+
+import { createClient } from '@supabase/supabase-js'
+import Anthropic from '@anthropic-ai/sdk'
+
+const supabase = createClient(...)
+const anthropic = new Anthropic(...)
+
+Deno.serve(async (req) => {
+  const { message, from } = await req.json()
+  
+  // 1. Store incoming message
+  await supabase.from('wa_messages').insert({
+    user_phone: from,
+    direction: 'inbound',
+    content: message,
+    embedding: await generateEmbedding(message)
+  })
+  
+  // 2. Retrieve context (last 10 messages + semantic search)
+  const recentMessages = await getRecentMessages(from, 10)
+  const relevantMemories = await semanticSearch(message, from, 5)
+  const userProfile = await getUserProfile(from)
+  
+  // 3. Build prompt with memory
+  const systemPrompt = buildSystemPrompt(userProfile, relevantMemories)
+  const conversationHistory = formatMessages(recentMessages)
+  
+  // 4. Generate response
+  const response = await anthropic.messages.create({
+    model: 'claude-3-5-sonnet-20241022',
+    system: systemPrompt,
+    messages: conversationHistory,
+    max_tokens: 1024
+  })
+  
+  // 5. Store response + update profile
+  await storeResponse(from, response.content[0].text)
+  await updateUserProfile(from, message, response)
+  
+  // 6. Send to WhatsApp
+  await sendWhatsAppMessage(from, response.content[0].text)
+  
+  return new Response('ok')
+})
+
+async function semanticSearch(query: string, userPhone: string, limit: number) {
+  const embedding = await generateEmbedding(query)
+  
+  const { data } = await supabase.rpc('match_messages', {
+    query_embedding: embedding,
+    match_threshold: 0.78,
+    match_count: limit,
+    user_phone: userPhone
+  })
+  
+  return data
+}
+</pre>
+
+<h3>3. Semantic Search Function (PostgreSQL)</h3>
+<pre>
+CREATE OR REPLACE FUNCTION match_messages(
+  query_embedding VECTOR(1536),
+  match_threshold FLOAT,
+  match_count INT,
+  user_phone TEXT
+)
+RETURNS TABLE (
+  id UUID,
+  content TEXT,
+  timestamp TIMESTAMPTZ,
+  similarity FLOAT
+)
+LANGUAGE SQL STABLE
+AS $$
+  SELECT
+    id,
+    content,
+    timestamp,
+    1 - (embedding <=> query_embedding) AS similarity
+  FROM wa_messages
+  WHERE user_phone = match_messages.user_phone
+    AND 1 - (embedding <=> query_embedding) > match_threshold
+  ORDER BY similarity DESC
+  LIMIT match_count;
+$$;
+</pre>
+
+<h2>Pattern di Retrieval</h2>
+
+<div class="solution">
+<strong>Hybrid Retrieval Strategy</strong>
+<pre>
+function getRelevantContext(userMessage, userPhone) {
+  return {
+    // Recency: ultime N conversazioni
+    recent: getLastN(userPhone, 10),
+    
+    // Similarity: semantic search su tutto lo storico
+    semantic: vectorSearch(userMessage, userPhone, top_k=5),
+    
+    // Profile: dati strutturati utente
+    profile: getUserProfile(userPhone),
+    
+    // Session: context della sessione corrente (Redis)
+    session: getActiveSession(userPhone)
+  }
+}
+</pre>
+</div>
+
+<h2>Ottimizzazioni</h2>
+
+<h3>1. Embedding Caching</h3>
+<pre>
+// Genera embeddings in batch async
+// Usa Voyage AI (più economico di OpenAI per embeddings)
+const BATCH_SIZE = 100
+
+async function processEmbeddingQueue() {
+  const unprocessed = await supabase
+    .from('wa_messages')
+    .select('id, content')
+    .is('embedding', null)
+    .limit(BATCH_SIZE)
+  
+  const embeddings = await voyageai.embed({
+    texts: unprocessed.map(m => m.content),
+    model: 'voyage-2'
+  })
+  
+  // Update in batch
+  await Promise.all(
+    unprocessed.map((msg, i) => 
+      supabase
+        .from('wa_messages')
+        .update({ embedding: embeddings[i] })
+        .eq('id', msg.id)
+    )
+  )
+}
+</pre>
+
+<h3>2. Context Window Management</h3>
+<pre>
+// Claude 3.5 Sonnet: 200k tokens context
+// Strategia: riempi il context con memoria rilevante
+
+function buildContextWindow(userPhone, currentMessage) {
+  const budget = 180000 // tokens (lascia margine)
+  let used = 0
+  
+  const context = []
+  
+  // 1. System prompt + profile (~ 2k tokens)
+  context.push(systemPrompt)
+  used += 2000
+  
+  // 2. Conversazione recente (~ 10k tokens)
+  const recent = getRecent(userPhone, estimateTokens(budget - used))
+  context.push(...recent)
+  used += estimateTokens(recent)
+  
+  // 3. Memorie semantiche rilevanti (~ 5k tokens)
+  const semantic = semanticSearch(currentMessage, userPhone, 10)
+  context.push(...semantic)
+  used += estimateTokens(semantic)
+  
+  // 4. Insights e pattern (~ 3k tokens)
+  const insights = getUserInsights(userPhone)
+  context.push(insights)
+  
+  return context
+}
+</pre>
+
+<h2>Risorse Utili</h2>
+
+<ul>
+<li><strong>Mem0 Documentation</strong>: <a href="https://docs.mem0.ai">docs.mem0.ai</a> - Memory layer specializzato per AI agents</li>
+<li><strong>Zep</strong>: <a href="https://www.getzep.com">getzep.com</a> - Long-term memory store, open source</li>
+<li><strong>pgvector</strong>: <a href="https://github.com/pgvector/pgvector">github.com/pgvector/pgvector</a> - Vector similarity search in PostgreSQL</li>
+<li><strong>LangChain Memory</strong>: <a href="https://python.langchain.com/docs/modules/memory/">python.langchain.com/docs/modules/memory/</a></li>
+<li><strong>Voyage AI</strong>: <a href="https://www.voyageai.com">voyageai.com</a> - Embeddings economici e performanti</li>
+<li><strong>WhatsApp Cloud API</strong>: <a href="https://developers.facebook.com/docs/whatsapp/cloud-api">developers.facebook.com/docs/whatsapp/cloud-api</a></li>
+</ul>
+
+<h2>Next Steps per Ambra</h2>
+
+<ol>
+<li><strong>Setup Supabase project</strong>
+   <ul>
+   <li>Crea progetto Supabase</li>
+   <li>Abilita pgvector extension</li>
+   <li>Esegui schema SQL sopra</li>
+   </ul>
+</li>
+
+<li><strong>WhatsApp Business API</strong>
+   <ul>
+   <li>Registra account business su Meta</li>
+   <li>Ottieni API credentials</li>
+   <li>Setup webhook endpoint (Supabase Edge Function)</li>
+   </ul>
+</li>
+
+<li><strong>Implementa MVP memory layer</strong>
+   <pre>
+   1. Store messages → PostgreSQL
+   2. Generate embeddings → Voyage AI
+   3. Retrieve context → recent + semantic
+   4. Generate response → Claude 3.5
+   5. Update profile → extract insights
+   </pre>
+</li>
+
+<li><strong>Test retrieval quality</strong>
+   <ul>
+   <li>Misura relevance delle memorie recuperate</li>
+   <li>Ottimizza similarity threshold (0.75-0.85)</li>
+   <li>Valuta hybrid retrieval weights</li>
+   </ul>
+</li>
+
+<li><strong>Monitoring</strong>
+   <ul>
+   <li>Track retrieval latency</li>
+   <li>Monitor embedding costs</li>
+   <li>Log conversation quality metrics</li>
+   </ul>
+</li>
+</ol>
+
+<div class="warning">
+<strong>💡 Quick Win:</strong> Inizia con Mem0 (mem0.ai) per validare il concept rapidamente. Poi migra su stack custom Supabase quando serve più controllo.
+</div>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
