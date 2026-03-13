@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: TenderMatch - scaling</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #332200; padding: 15px; border-left: 4px solid #ff0; margin: 20px 0; }
+.solution { background: #002211; padding: 15px; border-left: 4px solid #0f0; margin: 20px 0; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #49 | 2026-03-13 06:00</p>
+<h1>TenderMatch: scaling</h1>
+
+<h2>Il Problema</h2>
+<p>TenderMatch è un compliance engine per gare pubbliche che analizza bandi tramite AI. Lo stack attuale (Lovable, Express, Railway, Supabase, PostgreSQL, Stripe, Make) funziona per MVP, ma presenta limiti critici di scalabilità:</p>
+
+<div class="warning">
+<strong>Bottleneck identificati:</strong>
+<ul>
+<li><strong>AI Processing:</strong> Analisi bandi CPU-intensive, rischio timeout su Railway</li>
+<li><strong>Database:</strong> PostgreSQL su Supabase può saturarsi con migliaia di bandi concorrenti</li>
+<li><strong>Make Automations:</strong> Ottimo per prototipare, ma costoso e lento su volumi alti</li>
+<li><strong>Monolith Express:</strong> Difficile scalare selettivamente le funzioni più cariche</li>
+</ul>
+</div>
+
+<h2>Architettura di Scaling</h2>
+
+<h3>1. Separazione Concerns (Priority #1)</h3>
+<div class="solution">
+<p><strong>Microservices pattern:</strong></p>
+<ul>
+<li><strong>API Gateway</strong> (Lovable frontend) → rimane su Railway</li>
+<li><strong>Tender Ingestion Service</strong> → worker asincrono per scraping bandi</li>
+<li><strong>AI Analysis Service</strong> → queue-based processing (BullMQ + Redis)</li>
+<li><strong>Notification Service</strong> → gestione alert e match</li>
+</ul>
+<p>Stack consigliato: <code>Express → Supabase Edge Functions + BullMQ</code></p>
+</div>
+
+<h3>2. Database Optimization</h3>
+<div class="solution">
+<p><strong>Supabase PostgreSQL tuning:</strong></p>
+<ul>
+<li>Partizionamento tabelle bandi per data pubblicazione</li>
+<li>Indici BRIN per timestamp, GIN per full-text search</li>
+<li>Read replicas per query analitiche (Supabase Pro)</li>
+<li>Caching layer con Redis per bandi frequenti</li>
+</ul>
+<p><strong>Schema esempio:</strong></p>
+<code>CREATE INDEX CONCURRENTLY idx_bandi_published ON bandi USING BRIN(published_at);</code><br>
+<code>CREATE INDEX idx_bandi_fulltext ON bandi USING GIN(to_tsvector('italian', description));</code>
+</div>
+
+<h3>3. AI Processing Queue</h3>
+<div class="solution">
+<p><strong>Async processing con BullMQ:</strong></p>
+<ul>
+<li>Queue <code>tender-analysis</code> con priorità (urgenti vs batch)</li>
+<li>Worker pool scalabile (Railway autoscaling o Render)</li>
+<li>Rate limiting per API LLM (evitare 429)</li>
+<li>Retry logic con exponential backoff</li>
+</ul>
+<p><strong>Implementazione:</strong></p>
+<code>// worker.js<br>
+const queue = new Queue('tender-analysis', { connection: redis });<br>
+queue.process(10, async (job) => {<br>
+&nbsp;&nbsp;const analysis = await analyzeTenderWithAI(job.data.tenderId);<br>
+&nbsp;&nbsp;await supabase.from('analyses').insert(analysis);<br>
+});</code>
+</div>
+
+<h3>4. Sostituire Make.com</h3>
+<div class="warning">
+<p>Make è costoso su scala (€0.10-0.20 per esecuzione). Alternative:</p>
+<ul>
+<li><strong>Supabase Edge Functions</strong> per webhook/notifiche (gratis fino a 500k invocazioni)</li>
+<li><strong>n8n self-hosted</strong> su Railway (open source, €0 oltre infra)</li>
+<li><strong>Temporal.io</strong> per workflow complessi (overkill per ora)</li>
+</ul>
+<p>Migrazione graduale: Make → Edge Functions per notifiche semplici</p>
+</div>
+
+<h2>Metriche di Scaling</h2>
+<table style="width:100%; border-collapse: collapse;">
+<tr style="border-bottom: 1px solid #333;">
+<th style="text-align:left; padding:8px;">Metrica</th>
+<th style="text-align:left; padding:8px;">Attuale (MVP)</th>
+<th style="text-align:left; padding:8px;">Target (Scale)</th>
+</tr>
+<tr style="border-bottom: 1px solid #333;">
+<td style="padding:8px;">Bandi/giorno</td>
+<td style="padding:8px;">~100</td>
+<td style="padding:8px;">10.000+</td>
+</tr>
+<tr style="border-bottom: 1px solid #333;">
+<td style="padding:8px;">Tempo analisi AI</td>
+<td style="padding:8px;">30-60s</td>
+<td style="padding:8px;">&lt;10s (async)</td>
+</tr>
+<tr style="border-bottom: 1px solid #333;">
+<td style="padding:8px;">Utenti concorrenti</td>
+<td style="padding:8px;">10-50</td>
+<td style="padding:8px;">1000+</td>
+</tr>
+<tr style="border-bottom: 1px solid #333;">
+<td style="padding:8px;">Costo/bando</td>
+<td style="padding:8px;">€0.50</td>
+<td style="padding:8px;">&lt;€0.05</td>
+</tr>
+</table>
+
+<h2>Risorse Utili</h2>
+<ul>
+<li><a href="https://supabase.com/docs/guides/platform/performance" target="_blank">Supabase Performance Tuning</a></li>
+<li><a href="https://docs.bullmq.io/" target="_blank">BullMQ Documentation</a> - Queue robuste per Node.js</li>
+<li><a href="https://railway.app/docs/deploy/scaling" target="_blank">Railway Autoscaling</a></li>
+<li><a href="https://github.com/n8n-io/n8n" target="_blank">n8n Self-Hosted</a> - Alternativa a Make</li>
+<li><a href="https://www.postgresql.org/docs/current/ddl-partitioning.html" target="_blank">PostgreSQL Partitioning</a></li>
+</ul>
+
+<h2>Next Steps per Ambra</h2>
+<div class="solution">
+<p><strong>Sprint 1 (2 settimane):</strong></p>
+<ol>
+<li>Setup Redis su Railway + BullMQ per AI processing queue</li>
+<li>Migrare analisi bandi da sync a async (worker pattern)</li>
+<li>Aggiungere indici PostgreSQL (BRIN + GIN)</li>
+</ol>
+
+<p><strong>Sprint 2 (2 settimane):</strong></p>
+<ol>
+<li>Implementare caching Redis per bandi hot (ultimi 7gg)</li>
+<li>Sostituire 2-3 scenari Make con Edge Functions</li>
+<li>Setup monitoring (Sentry + Railway metrics)</li>
+</ol>
+
+<p><strong>Sprint 3 (3 settimane):</strong></p>
+<ol>
+<li>Partizionamento tabella bandi per mese</li>
+<li>Read replica Supabase per analytics</li>
+<li>Load testing con k6 (simulare 1000 utenti)</li>
+</ol>
+</div>
+
+<div class="warning">
+<p><strong>⚠️ Attenzione:</strong> Non ottimizzare prematuramente. Inizia con BullMQ + indici DB. Misura, poi scala.</p>
+</div>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
