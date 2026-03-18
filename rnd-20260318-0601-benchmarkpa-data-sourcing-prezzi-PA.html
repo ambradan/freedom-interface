@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>R&D: BenchmarkPA - data sourcing prezzi PA</title>
+<style>
+body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #eee; }
+h1 { color: #0f0; }
+h2 { color: #0a0; }
+a { color: #0f0; }
+code { background: #222; padding: 2px 6px; }
+.meta { color: #666; font-size: 0.9em; }
+.warning { background: #332200; border-left: 4px solid #ff9900; padding: 12px; margin: 16px 0; }
+.solution { background: #002211; border-left: 4px solid #00ff88; padding: 12px; margin: 16px 0; }
+ul { line-height: 1.8; }
+</style>
+</head>
+<body>
+<p class="meta">R&D Iteration #54 | 2026-03-18 06:00</p>
+<h1>BenchmarkPA: data sourcing prezzi PA</h1>
+
+<h2>Il Problema</h2>
+<p>BenchmarkPA necessita di dati pricing affidabili per confrontare prezzi B2B2G nelle acquisizioni sottosoglia della Pubblica Amministrazione. Il data sourcing è critico perché:</p>
+<ul>
+<li><strong>Frammentazione normativa:</strong> Ogni PA può avere convenzioni diverse (CONSIP, Centrali di Acquisto regionali, mercati locali)</li>
+<li><strong>Opacità dei dati:</strong> I prezzi sottosoglia (< €40k) spesso non sono pubblicati in formato strutturato</li>
+<li><strong>Qualità variabile:</strong> Dati incompleti, formati eterogenei, aggiornamenti irregolari</li>
+<li><strong>Compliance GDPR:</strong> Necessità di anonimizzare dati sensibili mantenendo utilità statistica</li>
+</ul>
+
+<div class="warning">
+<strong>⚠️ Sfida principale:</strong> Le PA non hanno obbligo di pubblicazione per acquisti sottosoglia, rendendo il data sourcing particolarmente complesso.
+</div>
+
+<h2>Approcci Comuni</h2>
+
+<h3>1. Scraping Portali Istituzionali</h3>
+<div class="solution">
+<strong>Fonti primarie:</strong>
+<ul>
+<li><code>acquistinretepa.it</code> - Mercato Elettronico PA (MePA)</li>
+<li><code>dati.anticorruzione.it</code> - Dataset ANAC</li>
+<li>Portali regionali (Intercent-ER, ARCA Lombardia, ecc.)</li>
+<li>Albi Fornitori comunali/provinciali</li>
+</ul>
+
+<strong>Stack tecnico:</strong>
+<pre><code>// Supabase Edge Function con Deno
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+serve(async (req) => {
+  const sources = [
+    'https://www.acquistinretepa.it/opencms/...',
+    'https://dati.anticorruzione.it/opendata/...'
+  ]
+  
+  // Scheduled scraping con rate limiting
+  const results = await Promise.allSettled(
+    sources.map(url => fetchAndParse(url))
+  )
+  
+  // Store in PostgreSQL con PostGIS per geo-queries
+  await supabase.from('prezzi_pa').upsert(cleanedData)
+})</code></pre>
+</div>
+
+<h3>2. API Ufficiali</h3>
+<ul>
+<li><strong>ANAC OpenData:</strong> <code>https://dati.anticorruzione.it</code> (XML/JSON)</li>
+<li><strong>CONSIP:</strong> Convenzioni attive via API (richiedere accesso)</li>
+<li><strong>BDNCP:</strong> Banca Dati Nazionale Contratti Pubblici</li>
+</ul>
+
+<h3>3. Partnership Strategiche</h3>
+<div class="solution">
+<strong>B2B2G approach:</strong>
+<ul>
+<li>Accordi con software gestionali PA (es. SICOGE, U-GOV)</li>
+<li>Convenzioni con Centrali di Acquisto regionali</li>
+<li>Data sharing con associazioni di categoria (ANCI, UPI)</li>
+</ul>
+</div>
+
+<h3>4. Crowdsourcing Verificato</h3>
+<ul>
+<li>Fornitori caricano preventivi (incentivati da visibilità)</li>
+<li>PA validano prezzi effettivi post-aggiudicazione</li>
+<li>Sistema di reputation per data quality</li>
+</ul>
+
+<h2>Architettura Proposta</h2>
+
+<pre><code>┌─────────────────┐
+│  Edge Functions │  ← Scheduled scraping (cron)
+└────────┬────────┘
+         │
+    ┌────▼─────────────────────────┐
+    │  PostgreSQL + PostGIS        │
+    │  ┌─────────────────────────┐ │
+    │  │ prezzi_pa               │ │
+    │  │ - id, cig, importo      │ │
+    │  │ - categoria_merceologica│ │
+    │  │ - stazione_appaltante   │ │
+    │  │ - geo_point (PostGIS)   │ │
+    │  │ - data_aggiudicazione   │ │
+    │  └─────────────────────────┘ │
+    └──────────────────────────────┘
+         │
+    ┌────▼────────────────┐
+    │  API Layer          │
+    │  - /api/benchmark   │
+    │  - /api/trends      │
+    │  - /api/anomalies   │
+    └─────────────────────┘</code></pre>
+
+<h2>Schema PostgreSQL Ottimizzato</h2>
+
+<pre><code>CREATE TABLE prezzi_pa (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  cig VARCHAR(10) UNIQUE,
+  importo DECIMAL(12,2) NOT NULL,
+  categoria_cpv VARCHAR(10), -- Common Procurement Vocabulary
+  descrizione TEXT,
+  stazione_appaltante_id INTEGER REFERENCES pa_entities(id),
+  geo_location GEOGRAPHY(POINT, 4326), -- PostGIS
+  data_pubblicazione DATE,
+  data_aggiudicazione DATE,
+  fonte VARCHAR(50), -- 'mepa', 'anac', 'consip', 'scraping'
+  quality_score DECIMAL(3,2), -- 0.00-1.00
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Indici per performance
+CREATE INDEX idx_categoria ON prezzi_pa(categoria_cpv);
+CREATE INDEX idx_importo ON prezzi_pa(importo);
+CREATE INDEX idx_geo ON prezzi_pa USING GIST(geo_location);
+CREATE INDEX idx_data ON prezzi_pa(data_aggiudicazione DESC);
+
+-- Materialized view per analytics
+CREATE MATERIALIZED VIEW benchmark_stats AS
+SELECT 
+  categoria_cpv,
+  PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY importo) as q1,
+  PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY importo) as median,
+  PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY importo) as q3,
+  AVG(importo) as avg_price,
+  COUNT(*) as sample_size
+FROM prezzi_pa
+WHERE quality_score > 0.7
+GROUP BY categoria_cpv;</code></pre>
+
+<h2>Data Quality Pipeline</h2>
+
+<pre><code>// Edge Function per validazione
+const validatePriceData = (record) => {
+  let score = 1.0
+  
+  // Penalità per dati mancanti
+  if (!record.cig) score -= 0.3
+  if (!record.categoria_cpv) score -= 0.2
+  if (!record.geo_location) score -= 0.1
+  
+  // Anomaly detection
+  const stats = await getStatsByCPV(record.categoria_cpv)
+  const zscore = (record.importo - stats.avg) / stats.stddev
+  if (Math.abs(zscore) > 3) score -= 0.4 // Outlier
+  
+  // Freshness
+  const daysSincePublish = daysBetween(record.data_pubblicazione, new Date())
+  if (daysSincePublish > 365) score -= 0.2
+  
+  return Math.max(0, score)
+}</code></pre>
+
+<h2>Risorse Utili</h2>
+
+<ul>
+<li><strong>ANAC OpenData:</strong> <a href="https://dati.anticorruzione.it">https://dati.anticorruzione.it</a></li>
+<li><strong>MePA API Docs:</strong> Richiedere accesso via PEC a Consip</li>
+<li><strong>CPV Codes:</strong> <a href="https://simap.ted.europa.eu/cpv">https://simap.ted.europa.eu/cpv</a> (classificazione merceologica)</li>
+<li><strong>PostGIS Docs:</strong> <a href="https://postgis.net/docs/">https://postgis.net/docs/</a> (geo-queries)</li>
+<li><strong>Supabase Cron:</strong> <a href="https://supabase.com/docs/guides/functions/schedule-functions">Schedule Functions</a></li>
+</ul>
+
+<h2>Compliance & Legal</h2>
+
+<div class="warning">
+<strong>⚠️ Attenzioni legali:</strong>
+<ul>
+<li><strong>GDPR:</strong> Anonimizzare dati personali (RUP, fornitori individuali)</li>
+<li><strong>Copyright:</strong> Verificare TOS dei portali scrapati</li>
+<li><strong>Trasparenza:</strong> Dichiarare fonti dati agli utenti finali</li>
+<li><strong>D.Lgs 50/2016:</strong> Rispettare normativa Codice Appalti</li>
+</ul>
+</div>
+
+<h2>Next Steps per Ambra</h2>
+
+<div class="solution">
+<strong>Sprint 1 - Data Foundation (2 settimane):</strong>
+<ol>
+<li>Setup PostgreSQL schema + PostGIS extension</li>
+<li>Implementare scraper ANAC (fonte più affidabile)</li>
+<li>Edge Function per scheduled import (cron daily)</li>
+<li>Quality scoring pipeline</li>
+</ol>
+
+<strong>Sprint 2 - API Layer (1 settimana):</strong>
+<ol>
+<li>Endpoint <code>/api/benchmark?cpv=xxx&geo=lat,lon&radius=50km</code></li>
+<li>Endpoint <code>/api/trends?cpv=xxx&timerange=12m</code></li>
+<li>Rate limiting + API keys (Supabase Auth)</li>
+</ol>
+
+<strong>Sprint 3 - Data Expansion (ongoing):</strong>
+<ol>
+<li>Integrare MePA API (se ottenuto accesso)</li>
+<li>Scraping portali regionali top-5 per volume</li>
+<li>Partnership pilota con 2-3 Centrali di Acquisto</li>
+</ol>
+
+<strong>Metriche di successo:</strong>
+<ul>
+<li>≥ 10,000 record con quality_score > 0.7</li>
+<li>Copertura ≥ 50 categorie CPV</li>
+<li>Latenza API < 200ms (p95)</li>
+<li>Data freshness: 80% record < 6 mesi</li>
+</ul>
+</div>
+
+<h2>Quick Win: MVP in 48h</h2>
+
+<pre><code>// 1. Scraper ANAC minimale
+const fetchANAC = async () => {
+  const res = await fetch('https://dati.anticorruzione.it/opendata/dataset/...')
+  const xml = await res.text()
+  return parseXML(xml) // Deno XML parser
+}
+
+// 2. Store in Supabase
+const { data, error } = await supabase
+  .from('prezzi_pa')
+  .upsert(records, { onConflict: 'cig' })
+
+// 3. Simple benchmark API
+app.get('/api/benchmark/:cpv', async (req, res) => {
+  const { cpv } = req.params
+  const stats = await supabase.rpc('get_benchmark_stats', { cpv_code: cpv })
+  res.json(stats)
+})</code></pre>
+
+<p class="meta">
+<strong>Prossima iterazione:</strong> Implementare proof-of-concept con dataset ANAC + schema PostgreSQL base
+</p>
+
+<p><a href="/">← Back</a></p>
+</body>
+</html>
